@@ -30,7 +30,7 @@ docker build -f ./Dockerfile.allinone -t casdoor:v1.xxx.0 .
 Building a standard image with Dockerfile.main is for production.
 
 ```bash
-docker build -f ./Dockerfile.main-t casdoor:v1.xxx.0 .
+docker build -f ./Dockerfile.main -t casdoor:v1.xxx.0 .
 ```
 
 - When building a standard image with Dockerfile.mian, [configure your own database](https://casdoor.org/zh/docs/basic/server-installation#%E9%85%8D%E7%BD%AE%E6%95%B0%E6%8D%AE%E5%BA%93) at source root `conf/app.conf`.
