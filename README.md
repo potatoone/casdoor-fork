@@ -1,3 +1,25 @@
+# Branch declaration
+
+This casdoor branch modifies the userinfo scope passed by OIDC with the user.Groups field changed to user.Tag, passed to resp.Groups. Make it possible to import in excel by, for example, "test1,test2", passing single or multiple groups using string slicing.
+
+**branch** is a branch with functional changes, and **sync-casdoor** is a backup that is synchronized with the community Edition. Use git clone to get the source code:
+
+Use git clone to get the source code:
+```shell
+# branch
+git clone https://github.com/potatoone/casdoor-fork.git -b branch
+# sync-casdoor
+git clone https://github.com/potatoone/casdoor-fork.git -b sync-casdoor
+```
+
+The docker image has been uploaded to the docker public repository. Run the following command to obtain the application:
+```shell
+# images
+docker pull onepotato/casdoor:1.595.0
+```
+
+<br>
+
 <h1 align="center" style="border-bottom: none;">📦⚡️ Casdoor</h1>
 <h3 align="center">An open-source UI-first Identity and Access Management (IAM) / Single-Sign-On (SSO) platform with web UI supporting OAuth 2.0, OIDC, SAML, CAS, LDAP, SCIM, WebAuthn, TOTP, MFA and RADIUS</h3>
 <p align="center">
