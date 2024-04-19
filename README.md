@@ -27,7 +27,7 @@ Building an all-in-one image with Dockerfile.allinone is for testing purposes on
 docker build -f ./Dockerfile.allinone -t casdoor:v1.xxx.0 .
 ```
 
-Building a standard image with Dockerfile.main is for testing purposes only.
+Building a standard image with Dockerfile.main is for production.
 
 ```bash
 docker build -f ./Dockerfile.main-t casdoor:v1.xxx.0 .
