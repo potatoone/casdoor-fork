@@ -17,7 +17,26 @@ The docker image has been uploaded to the docker public repository. Run the foll
 # images
 docker pull onepotato/casdoor:v1.596.0
 ```
+<br>
 
+# Build your own image with the Dockerfile
+
+Building an all-in-one image with Dockerfile.allinone is for testing purposes only.
+
+```bash
+docker build -f ./Dockerfile.allinone -t casdoor:v1.xxx.0 .
+```
+
+Building a standard image with Dockerfile.main is for testing purposes only.
+
+```bash
+docker build -f ./Dockerfile.main-t casdoor:v1.xxx.0 .
+```
+
+- When building a standard image with Dockerfile.mian, [configure your own database](https://casdoor.org/zh/docs/basic/server-installation#%E9%85%8D%E7%BD%AE%E6%95%B0%E6%8D%AE%E5%BA%93) at source root `conf/app.conf`.
+- Modify v1.xxx.0 to your custom version.
+
+<br>
 <br>
 
 <h1 align="center" style="border-bottom: none;">📦⚡️ Casdoor</h1>
