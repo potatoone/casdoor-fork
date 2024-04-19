@@ -947,7 +947,15 @@ func GetUserInfo(user *User, scope string, aud string, host string) (*Userinfo, 
 		resp.Name = user.Name
 		resp.DisplayName = user.DisplayName
 		resp.Avatar = user.Avatar
-		resp.Groups = user.Groups
+		
+		if user.Tag != "" {
+			// strings.Split 按逗号分割字符串，例如 "test1,test2"，并将结果转换为字符串切片
+			// 若 user.Tag 只有一个群组名称，strings.Split 会返回包含该名称的切片
+			resp.Groups = strings.Split(user.Tag, ",")
+		} else {
+			// 如果 user.Tag 是空的，resp.Groups 被设置为 nil 或空切片
+			resp.Groups = nil // 或者使用 resp.Groups = []string{} 如果你想要一个空切片
+		}
 
 		err := ExtendUserWithRolesAndPermissions(user)
 		if err != nil {
