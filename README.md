@@ -15,7 +15,7 @@ git clone https://github.com/potatoone/casdoor-fork.git -b sync-casdoor
 The docker image has been uploaded to the docker public repository. Run the following command to obtain the application:
 ```shell
 # images
-docker pull onepotato/casdoor:v1.597.0
+docker pull onepotato/casdoor:v1.623.0
 ```
 <br>
 
