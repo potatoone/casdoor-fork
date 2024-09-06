@@ -91,11 +91,13 @@ type Application struct {
 	CertPublicKey         string          `xorm:"-" json:"certPublicKey"`
 	Tags                  []string        `xorm:"mediumtext" json:"tags"`
 	SamlAttributes        []*SamlItem     `xorm:"varchar(1000)" json:"samlAttributes"`
+	IsShared              bool            `json:"isShared"`
 
 	ClientId             string     `xorm:"varchar(100)" json:"clientId"`
 	ClientSecret         string     `xorm:"varchar(100)" json:"clientSecret"`
 	RedirectUris         []string   `xorm:"varchar(1000)" json:"redirectUris"`
 	TokenFormat          string     `xorm:"varchar(100)" json:"tokenFormat"`
+	TokenSigningMethod   string     `xorm:"varchar(100)" json:"tokenSigningMethod"`
 	TokenFields          []string   `xorm:"varchar(1000)" json:"tokenFields"`
 	ExpireInHours        int        `json:"expireInHours"`
 	RefreshExpireInHours int        `json:"refreshExpireInHours"`
@@ -123,9 +125,9 @@ func GetApplicationCount(owner, field, value string) (int64, error) {
 	return session.Count(&Application{})
 }
 
-func GetOrganizationApplicationCount(owner, Organization, field, value string) (int64, error) {
+func GetOrganizationApplicationCount(owner, organization, field, value string) (int64, error) {
 	session := GetSession(owner, -1, -1, field, value, "", "")
-	return session.Count(&Application{Organization: Organization})
+	return session.Where("organization = ? or is_shared = ? ", organization, true).Count(&Application{})
 }
 
 func GetApplications(owner string) ([]*Application, error) {
@@ -140,7 +142,7 @@ func GetApplications(owner string) ([]*Application, error) {
 
 func GetOrganizationApplications(owner string, organization string) ([]*Application, error) {
 	applications := []*Application{}
-	err := ormer.Engine.Desc("created_time").Find(&applications, &Application{Organization: organization})
+	err := ormer.Engine.Desc("created_time").Where("organization = ? or is_shared = ? ", organization, true).Find(&applications, &Application{})
 	if err != nil {
 		return applications, err
 	}
@@ -162,7 +164,7 @@ func GetPaginationApplications(owner string, offset, limit int, field, value, so
 func GetPaginationOrganizationApplications(owner, organization string, offset, limit int, field, value, sortField, sortOrder string) ([]*Application, error) {
 	applications := []*Application{}
 	session := GetSession(owner, offset, limit, field, value, sortField, sortOrder)
-	err := session.Find(&applications, &Application{Organization: organization})
+	err := session.Where("organization = ? or is_shared = ? ", organization, true).Find(&applications, &Application{})
 	if err != nil {
 		return applications, err
 	}
@@ -337,10 +339,16 @@ func getApplication(owner string, name string) (*Application, error) {
 		return nil, nil
 	}
 
-	application := Application{Owner: owner, Name: name}
+	realApplicationName, sharedOrg := util.GetSharedOrgFromApp(name)
+
+	application := Application{Owner: owner, Name: realApplicationName}
 	existed, err := ormer.Engine.Get(&application)
 	if err != nil {
 		return nil, err
+	}
+
+	if application.IsShared && sharedOrg != "" {
+		application.Organization = sharedOrg
 	}
 
 	if existed {
@@ -428,9 +436,16 @@ func GetApplicationByUserId(userId string) (application *Application, err error)
 
 func GetApplicationByClientId(clientId string) (*Application, error) {
 	application := Application{}
-	existed, err := ormer.Engine.Where("client_id=?", clientId).Get(&application)
+
+	realClientId, sharedOrg := util.GetSharedOrgFromApp(clientId)
+
+	existed, err := ormer.Engine.Where("client_id=?", realClientId).Get(&application)
 	if err != nil {
 		return nil, err
+	}
+
+	if application.IsShared && sharedOrg != "" {
+		application.Organization = sharedOrg
 	}
 
 	if existed {
@@ -516,7 +531,7 @@ func GetMaskedApplication(application *Application, userId string) *Application 
 
 	providerItems := []*ProviderItem{}
 	for _, providerItem := range application.Providers {
-		if providerItem.Provider != nil && (providerItem.Provider.Category == "OAuth" || providerItem.Provider.Category == "Web3" || providerItem.Provider.Category == "Captcha") {
+		if providerItem.Provider != nil && (providerItem.Provider.Category == "OAuth" || providerItem.Provider.Category == "Web3" || providerItem.Provider.Category == "Captcha" || providerItem.Provider.Category == "SAML") {
 			providerItems = append(providerItems, providerItem)
 		}
 	}
@@ -624,6 +639,10 @@ func UpdateApplication(id string, application *Application) (bool, error) {
 
 	if oldApplication.ClientId != application.ClientId && applicationByClientId != nil {
 		return false, err
+	}
+
+	if application.IsShared == true && application.Organization != "built-in" {
+		return false, fmt.Errorf("only applications belonging to built-in organization can be shared")
 	}
 
 	for _, providerItem := range application.Providers {

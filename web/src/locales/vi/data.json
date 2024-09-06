@@ -121,6 +121,8 @@
     "Token fields - Tooltip": "Token fields - Tooltip",
     "Token format": "Định dạng mã thông báo",
     "Token format - Tooltip": "Định dạng của mã thông báo truy cập",
+    "Token signing method": "Token signing method",
+    "Token signing method - Tooltip": "Signing method of JWT token, needs to be the same algorithm as the certificate",
     "You are unexpected to see this prompt page": "Bạn không mong đợi thấy trang này hiện lên"
   },
   "cert": {
@@ -234,6 +236,8 @@
     "Enable": "Enable",
     "Enable dark logo": "Enable dark logo",
     "Enable dark logo - Tooltip": "Enable dark logo",
+    "Enable tour": "Enable tour",
+    "Enable tour - Tooltip": "Display tour for users",
     "Enabled": "Enabled",
     "Enabled successfully": "Enabled successfully",
     "Enforcers": "Enforcers",
@@ -265,6 +269,8 @@
     "Invitations": "Invitations",
     "Is enabled": "Đã được kích hoạt",
     "Is enabled - Tooltip": "Đặt liệu nó có thể sử dụng hay không",
+    "Is shared": "Is shared",
+    "Is shared - Tooltip": "Share this application with other organizations",
     "LDAPs": "LDAPs",
     "LDAPs - Tooltip": "Máy chủ LDAP",
     "Languages": "Ngôn ngữ",
@@ -441,6 +447,8 @@
     "Base DN": "DN cơ sở",
     "Base DN - Tooltip": "Đơn vị căn bản (Base DN) trong quá trình tìm kiếm LDAP",
     "CN": "CN",
+    "Default group": "Default group",
+    "Default group - Tooltip": "Group to which users belong after synchronization",
     "Edit LDAP": "Sửa LDAP",
     "Enable SSL": "Kích hoạt SSL",
     "Enable SSL - Tooltip": "Có nên kích hoạt SSL hay không?",
@@ -550,6 +558,11 @@
     "Your email is": "Your email is",
     "Your phone is": "Your phone is",
     "preferred": "preferred"
+  },
+  "mfaAccount": {
+    "Account Name": "Account Name",
+    "Issuer": "Issuer",
+    "Secret Key": "Secret Key"
   },
   "model": {
     "Edit Model": "Sửa mô hình",
@@ -1136,6 +1149,7 @@
     "Link": "Liên kết",
     "Location": "Vị trí",
     "Location - Tooltip": "Thành phố cư trú",
+    "MFA accounts": "MFA accounts",
     "Managed accounts": "Quản lý tài khoản",
     "Modify password...": "Sửa đổi mật khẩu...",
     "Multi-factor authentication": "Multi-factor authentication",

@@ -121,6 +121,8 @@
     "Token fields - Tooltip": "Token fields - Tooltip",
     "Token format": "Token format",
     "Token format - Tooltip": "The format of access token",
+    "Token signing method": "Token signing method",
+    "Token signing method - Tooltip": "Signing method of JWT token, needs to be the same algorithm as the certificate",
     "You are unexpected to see this prompt page": "You are unexpected to see this prompt page"
   },
   "cert": {
@@ -234,6 +236,8 @@
     "Enable": "Etkinleştir",
     "Enable dark logo": "Enable dark logo",
     "Enable dark logo - Tooltip": "Enable dark logo",
+    "Enable tour": "Enable tour",
+    "Enable tour - Tooltip": "Display tour for users",
     "Enabled": "Etkin",
     "Enabled successfully": "Başarıyla etkinleştirildi",
     "Enforcers": "Enforcers",
@@ -265,6 +269,8 @@
     "Invitations": "Davetler",
     "Is enabled": "Aktif Mi?",
     "Is enabled - Tooltip": "Set whether it can use",
+    "Is shared": "Is shared",
+    "Is shared - Tooltip": "Share this application with other organizations",
     "LDAPs": "LDAPs",
     "LDAPs - Tooltip": "LDAP servers",
     "Languages": "Diller",
@@ -441,6 +447,8 @@
     "Base DN": "Base DN",
     "Base DN - Tooltip": "Base DN during LDAP search",
     "CN": "CN",
+    "Default group": "Default group",
+    "Default group - Tooltip": "Group to which users belong after synchronization",
     "Edit LDAP": "Edit LDAP",
     "Enable SSL": "Enable SSL",
     "Enable SSL - Tooltip": "Whether to enable SSL",
@@ -550,6 +558,11 @@
     "Your email is": "E-postanız",
     "Your phone is": "Telefon numaranız",
     "preferred": "tercih edilen"
+  },
+  "mfaAccount": {
+    "Account Name": "Account Name",
+    "Issuer": "Issuer",
+    "Secret Key": "Secret Key"
   },
   "model": {
     "Edit Model": "Modeli Düzenle",
@@ -1136,6 +1149,7 @@
     "Link": "Link",
     "Location": "Location",
     "Location - Tooltip": "City of residence",
+    "MFA accounts": "MFA accounts",
     "Managed accounts": "Managed accounts",
     "Modify password...": "Modify password...",
     "Multi-factor authentication": "Multi-factor authentication",

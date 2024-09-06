@@ -121,6 +121,8 @@
     "Token fields - Tooltip": "Token fields - Tooltip",
     "Token format": "Token-Format",
     "Token format - Tooltip": "Das Format des Access-Tokens",
+    "Token signing method": "Token signing method",
+    "Token signing method - Tooltip": "Signing method of JWT token, needs to be the same algorithm as the certificate",
     "You are unexpected to see this prompt page": "Sie sind unerwartet auf diese Aufforderungsseite gelangt"
   },
   "cert": {
@@ -234,6 +236,8 @@
     "Enable": "Enable",
     "Enable dark logo": "Enable dark logo",
     "Enable dark logo - Tooltip": "Enable dark logo",
+    "Enable tour": "Enable tour",
+    "Enable tour - Tooltip": "Display tour for users",
     "Enabled": "Enabled",
     "Enabled successfully": "Enabled successfully",
     "Enforcers": "Enforcers",
@@ -265,6 +269,8 @@
     "Invitations": "Invitations",
     "Is enabled": "Ist aktiviert",
     "Is enabled - Tooltip": "Festlegen, ob es verwendet werden kann",
+    "Is shared": "Is shared",
+    "Is shared - Tooltip": "Share this application with other organizations",
     "LDAPs": "LDAPs",
     "LDAPs - Tooltip": "LDAP-Server",
     "Languages": "Sprachen",
@@ -441,6 +447,8 @@
     "Base DN": "Basis-DN",
     "Base DN - Tooltip": "Basis-DN während der LDAP-Suche",
     "CN": "KN",
+    "Default group": "Default group",
+    "Default group - Tooltip": "Group to which users belong after synchronization",
     "Edit LDAP": "LDAP bearbeiten",
     "Enable SSL": "Aktivieren Sie SSL",
     "Enable SSL - Tooltip": "Ob SSL aktiviert werden soll",
@@ -550,6 +558,11 @@
     "Your email is": "Your email is",
     "Your phone is": "Your phone is",
     "preferred": "preferred"
+  },
+  "mfaAccount": {
+    "Account Name": "Account Name",
+    "Issuer": "Issuer",
+    "Secret Key": "Secret Key"
   },
   "model": {
     "Edit Model": "Modell bearbeiten",
@@ -1136,6 +1149,7 @@
     "Link": "Link",
     "Location": "Ort",
     "Location - Tooltip": "Stadt des Wohnsitzes",
+    "MFA accounts": "MFA accounts",
     "Managed accounts": "Verwaltete Konten",
     "Modify password...": "Passwort ändern...",
     "Multi-factor authentication": "Multi-factor authentication",

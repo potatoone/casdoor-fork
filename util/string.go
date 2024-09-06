@@ -131,6 +131,15 @@ func GetOwnerAndNameFromId(id string) (string, string) {
 	return tokens[0], tokens[1]
 }
 
+func GetOwnerAndNameFromIdWithError(id string) (string, string, error) {
+	tokens := strings.Split(id, "/")
+	if len(tokens) != 2 {
+		return "", "", errors.New("GetOwnerAndNameFromId() error, wrong token count for ID: " + id)
+	}
+
+	return tokens[0], tokens[1], nil
+}
+
 func GetOwnerFromId(id string) string {
 	tokens := strings.Split(id, "/")
 	if len(tokens) != 2 {
@@ -152,6 +161,16 @@ func GetOwnerAndNameAndOtherFromId(id string) (string, string, string) {
 	}
 
 	return tokens[0], tokens[1], tokens[2]
+}
+
+func GetSharedOrgFromApp(rawName string) (name string, organization string) {
+	name = rawName
+	splitName := strings.Split(rawName, "-org-")
+	if len(splitName) >= 2 {
+		organization = splitName[len(splitName)-1]
+		name = splitName[0]
+	}
+	return name, organization
 }
 
 func GenerateId() string {
