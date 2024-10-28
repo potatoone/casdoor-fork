@@ -52,7 +52,6 @@ class LoginPage extends React.Component {
       username: null,
       validEmailOrPhone: false,
       validEmail: false,
-      enableCaptchaModal: CaptchaRule.Never,
       openCaptchaModal: false,
       openFaceRecognitionModal: false,
       verifyCaptcha: undefined,
@@ -93,17 +92,6 @@ class LoginPage extends React.Component {
     }
     if (prevProps.application !== this.props.application) {
       this.setState({loginMethod: this.getDefaultLoginMethod(this.props.application)});
-
-      const captchaProviderItems = this.getCaptchaProviderItems(this.props.application);
-      if (captchaProviderItems) {
-        if (captchaProviderItems.some(providerItem => providerItem.rule === "Always")) {
-          this.setState({enableCaptchaModal: CaptchaRule.Always});
-        } else if (captchaProviderItems.some(providerItem => providerItem.rule === "Dynamic")) {
-          this.setState({enableCaptchaModal: CaptchaRule.Dynamic});
-        } else {
-          this.setState({enableCaptchaModal: CaptchaRule.Never});
-        }
-      }
     }
 
     if (prevProps.account !== this.props.account && this.props.account !== undefined) {
@@ -129,6 +117,19 @@ class LoginPage extends React.Component {
           values["application"] = this.props.application.name;
           this.login(values);
         }
+      }
+    }
+  }
+
+  getCaptchaRule(application) {
+    const captchaProviderItems = this.getCaptchaProviderItems(application);
+    if (captchaProviderItems) {
+      if (captchaProviderItems.some(providerItem => providerItem.rule === "Always")) {
+        return CaptchaRule.Always;
+      } else if (captchaProviderItems.some(providerItem => providerItem.rule === "Dynamic")) {
+        return CaptchaRule.Dynamic;
+      } else {
+        return CaptchaRule.Never;
       }
     }
   }
@@ -226,6 +227,22 @@ class LoginPage extends React.Component {
     return "password";
   }
 
+  getCurrentLoginMethod() {
+    if (this.state.loginMethod === "password") {
+      return "Password";
+    } else if (this.state.loginMethod?.includes("verificationCode")) {
+      return "Verification code";
+    } else if (this.state.loginMethod === "webAuthn") {
+      return "WebAuthn";
+    } else if (this.state.loginMethod === "ldap") {
+      return "LDAP";
+    } else if (this.state.loginMethod === "faceId") {
+      return "Face ID";
+    } else {
+      return "Password";
+    }
+  }
+
   getPlaceholder() {
     switch (this.state.loginMethod) {
     case "verificationCode": return i18next.t("login:Email or phone");
@@ -261,17 +278,7 @@ class LoginPage extends React.Component {
       values["organization"] = this.getApplicationObj().organization;
     }
 
-    if (this.state.loginMethod === "password") {
-      values["signinMethod"] = "Password";
-    } else if (this.state.loginMethod?.includes("verificationCode")) {
-      values["signinMethod"] = "Verification code";
-    } else if (this.state.loginMethod === "webAuthn") {
-      values["signinMethod"] = "WebAuthn";
-    } else if (this.state.loginMethod === "ldap") {
-      values["signinMethod"] = "LDAP";
-    } else if (this.state.loginMethod === "faceId") {
-      values["signinMethod"] = "Face ID";
-    }
+    values["signinMethod"] = this.getCurrentLoginMethod();
     const oAuthParams = Util.getOAuthGetParameters();
 
     values["type"] = oAuthParams?.responseType ?? this.state.type;
@@ -388,13 +395,14 @@ class LoginPage extends React.Component {
       } else {
         values["password"] = passwordCipher;
       }
-      if (this.state.enableCaptchaModal === CaptchaRule.Always) {
+      const captchaRule = this.getCaptchaRule(this.getApplicationObj());
+      if (captchaRule === CaptchaRule.Always) {
         this.setState({
           openCaptchaModal: true,
           values: values,
         });
         return;
-      } else if (this.state.enableCaptchaModal === CaptchaRule.Dynamic) {
+      } else if (captchaRule === CaptchaRule.Dynamic) {
         this.checkCaptchaStatus(values);
         return;
       }
@@ -407,6 +415,7 @@ class LoginPage extends React.Component {
     if (this.state.type === "cas") {
       // CAS
       const casParams = Util.getCasParameters();
+      values["signinMethod"] = this.getCurrentLoginMethod();
       values["type"] = this.state.type;
       AuthBackend.loginCas(values, casParams).then((res) => {
         const loginHandler = (res) => {
@@ -911,7 +920,7 @@ class LoginPage extends React.Component {
   }
 
   renderCaptchaModal(application) {
-    if (this.state.enableCaptchaModal === CaptchaRule.Never) {
+    if (this.getCaptchaRule(this.getApplicationObj()) === CaptchaRule.Never) {
       return null;
     }
     const captchaProviderItems = this.getCaptchaProviderItems(application);
@@ -1291,7 +1300,7 @@ class LoginPage extends React.Component {
         <div className="login-content" style={{margin: this.props.preview ?? this.parseOffset(application.formOffset)}}>
           {Setting.inIframe() || Setting.isMobile() ? null : <div dangerouslySetInnerHTML={{__html: application.formCss}} />}
           {Setting.inIframe() || !Setting.isMobile() ? null : <div dangerouslySetInnerHTML={{__html: application.formCssMobile}} />}
-          <div className="login-panel">
+          <div className={Setting.isDarkTheme(this.props.themeAlgorithm) ? "login-panel-dark" : "login-panel"}>
             <div className="side-image" style={{display: application.formOffset !== 4 ? "none" : null}}>
               <div dangerouslySetInnerHTML={{__html: application.formSideHtml}} />
             </div>
