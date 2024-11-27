@@ -243,7 +243,10 @@ class LoginPage extends React.Component {
     }
   }
 
-  getPlaceholder() {
+  getPlaceholder(defaultPlaceholder = null) {
+    if (defaultPlaceholder) {
+      return defaultPlaceholder;
+    }
     switch (this.state.loginMethod) {
     case "verificationCode": return i18next.t("login:Email or phone");
     case "verificationCodeEmail": return i18next.t("login:Email");
@@ -444,8 +447,8 @@ class LoginPage extends React.Component {
                     formValues={values}
                     authParams={casParams}
                     application={this.getApplicationObj()}
-                    onFail={() => {
-                      Setting.showMessage("error", i18next.t("mfa:Verification failed"));
+                    onFail={(errorMessage) => {
+                      Setting.showMessage("error", errorMessage);
                     }}
                     onSuccess={(res) => loginHandler(res)}
                   />);
@@ -485,6 +488,10 @@ class LoginPage extends React.Component {
               const accessToken = res.data;
               Setting.goToLink(`${oAuthParams.redirectUri}#${amendatoryResponseType}=${accessToken}&state=${oAuthParams.state}&token_type=bearer`);
             } else if (responseType === "saml") {
+              if (res.data === RequiredMfa) {
+                this.props.onLoginSuccess(window.location.href);
+                return;
+              }
               if (res.data2.needUpdatePassword) {
                 sessionStorage.setItem("signinUrl", window.location.href);
                 Setting.goToLink(this, `/forget/${this.state.applicationName}`);
@@ -513,8 +520,8 @@ class LoginPage extends React.Component {
                       formValues={values}
                       authParams={oAuthParams}
                       application={this.getApplicationObj()}
-                      onFail={() => {
-                        Setting.showMessage("error", i18next.t("mfa:Verification failed"));
+                      onFail={(errorMessage) => {
+                        Setting.showMessage("error", errorMessage);
                       }}
                       onSuccess={(res) => loginHandler(res)}
                     />);
@@ -679,7 +686,7 @@ class LoginPage extends React.Component {
               id="input"
               className="login-username-input"
               prefix={<UserOutlined className="site-form-item-icon" />}
-              placeholder={this.getPlaceholder()}
+              placeholder={this.getPlaceholder(signinItem.placeholder)}
               onChange={e => {
                 this.setState({
                   username: e.target.value,
@@ -1093,7 +1100,7 @@ class LoginPage extends React.Component {
                 className="login-password-input"
                 prefix={<LockOutlined className="site-form-item-icon" />}
                 type="password"
-                placeholder={i18next.t("general:Password")}
+                placeholder={signinItem.placeholder ? signinItem.placeholder : i18next.t("general:Password")}
                 disabled={this.state.loginMethod === "password" ? !Setting.isPasswordEnabled(application) : !Setting.isLdapEnabled(application)}
               />
             </Form.Item>
