@@ -42,6 +42,7 @@ import * as MfaBackend from "./backend/MfaBackend";
 import AccountAvatar from "./account/AccountAvatar";
 import FaceIdTable from "./table/FaceIdTable";
 import MfaAccountTable from "./table/MfaAccountTable";
+import MfaTable from "./table/MfaTable";
 
 const {Option} = Select;
 
@@ -397,6 +398,12 @@ class UserEditPage extends React.Component {
         </Row>
       );
     } else if (accountItem.name === "User type") {
+      let userTypes = ["normal-user", "paid-user"];
+      const organization = this.getUserOrganization();
+      if (organization && organization.userTypes && organization.userTypes.length > 0) {
+        userTypes = organization.userTypes;
+      }
+
       return (
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
@@ -404,7 +411,7 @@ class UserEditPage extends React.Component {
           </Col>
           <Col span={22} >
             <Select virtual={false} style={{width: "100%"}} value={this.state.user.type} onChange={(value => {this.updateUserField("type", value);})}
-              options={["normal-user", "paid-user"].map(item => Setting.getOption(item, item))}
+              options={userTypes.map(item => Setting.getOption(item, item))}
             />
           </Col>
         </Row>
@@ -920,6 +927,19 @@ class UserEditPage extends React.Component {
           </Col>
         </Row>
       );
+    } else if (accountItem.name === "MFA items") {
+      return (<Row style={{marginTop: "20px"}} >
+        <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+          {Setting.getLabel(i18next.t("general:MFA items"), i18next.t("general:MFA items - Tooltip"))} :
+        </Col>
+        <Col span={22} >
+          <MfaTable
+            title={i18next.t("general:MFA items")}
+            table={this.state.user.mfaItems ?? []}
+            onUpdateTable={(value) => {this.updateUserField("mfaItems", value);}}
+          />
+        </Col>
+      </Row>);
     } else if (accountItem.name === "Multi-factor authentication") {
       return (
         !this.isSelfOrAdmin() ? null : (
@@ -1048,6 +1068,7 @@ class UserEditPage extends React.Component {
             <FaceIdTable
               title={i18next.t("user:Face IDs")}
               table={this.state.user.faceIds}
+              {...this.props}
               onUpdateTable={(table) => {this.updateUserField("faceIds", table);}}
             />
           </Col>

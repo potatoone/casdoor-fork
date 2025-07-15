@@ -209,6 +209,15 @@ class ProductEditPage extends React.Component {
                 [
                   {id: "USD", name: "USD"},
                   {id: "CNY", name: "CNY"},
+                  {id: "EUR", name: "EUR"},
+                  {id: "JPY", name: "JPY"},
+                  {id: "GBP", name: "GBP"},
+                  {id: "AUD", name: "AUD"},
+                  {id: "CAD", name: "CAD"},
+                  {id: "CHF", name: "CHF"},
+                  {id: "HKD", name: "HKD"},
+                  {id: "SGD", name: "SGD"},
+                  {id: "BRL", name: "BRL"},
                 ].map((item, index) => <Option key={index} value={item.id}>{item.name}</Option>)
               }
             </Select>
@@ -276,6 +285,16 @@ class ProductEditPage extends React.Component {
           <Col span={22} >
             <Input prefix={<LinkOutlined />} value={this.state.product.returnUrl} onChange={e => {
               this.updateProductField("returnUrl", e.target.value);
+            }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("product:Success URL"), i18next.t("product:Success URL - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <Input prefix={<LinkOutlined />} value={this.state.product.successUrl} onChange={e => {
+              this.updateProductField("successUrl", e.target.value);
             }} />
           </Col>
         </Row>

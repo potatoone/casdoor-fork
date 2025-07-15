@@ -17,7 +17,7 @@ package object
 import (
 	"errors"
 	"fmt"
-	"sync"
+	"strings"
 
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/util"
@@ -36,12 +36,14 @@ type Group struct {
 	ContactEmail string   `xorm:"varchar(100)" json:"contactEmail"`
 	Type         string   `xorm:"varchar(100)" json:"type"`
 	ParentId     string   `xorm:"varchar(100)" json:"parentId"`
+	ParentName   string   `xorm:"-" json:"parentName"`
 	IsTopGroup   bool     `xorm:"bool" json:"isTopGroup"`
 	Users        []string `xorm:"-" json:"users"`
 
-	Title    string   `json:"title,omitempty"`
-	Key      string   `json:"key,omitempty"`
-	Children []*Group `json:"children,omitempty"`
+	Title        string   `json:"title,omitempty"`
+	Key          string   `json:"key,omitempty"`
+	HaveChildren bool     `xorm:"-" json:"haveChildren"`
+	Children     []*Group `json:"children,omitempty"`
 
 	IsEnabled bool `json:"isEnabled"`
 }
@@ -77,6 +79,31 @@ func GetPaginationGroups(owner string, offset, limit int, field, value, sortFiel
 	}
 
 	return groups, nil
+}
+
+func GetGroupsHaveChildrenMap(groups []*Group) (map[string]*Group, error) {
+	groupsHaveChildren := []*Group{}
+	resultMap := make(map[string]*Group)
+	groupMap := map[string]*Group{}
+
+	groupIds := []string{}
+	for _, group := range groups {
+		groupMap[group.Name] = group
+		groupIds = append(groupIds, group.Name)
+		if !group.IsTopGroup {
+			groupIds = append(groupIds, group.ParentId)
+		}
+	}
+
+	err := ormer.Engine.Cols("owner", "name", "parent_id", "display_name").Distinct("name").In("name", groupIds).Find(&groupsHaveChildren)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, group := range groupsHaveChildren {
+		resultMap[group.GetId()] = group
+	}
+	return resultMap, nil
 }
 
 func getGroup(owner string, name string) (*Group, error) {
@@ -154,6 +181,41 @@ func AddGroups(groups []*Group) (bool, error) {
 	return affected != 0, nil
 }
 
+func AddGroupsInBatch(groups []*Group) (bool, error) {
+	if len(groups) == 0 {
+		return false, nil
+	}
+
+	session := ormer.Engine.NewSession()
+	defer session.Close()
+	err := session.Begin()
+	if err != nil {
+		return false, err
+	}
+
+	for _, group := range groups {
+		err = checkGroupName(group.Name)
+		if err != nil {
+			return false, err
+		}
+
+		affected, err := session.Insert(group)
+		if err != nil {
+			return false, err
+		}
+		if affected == 0 {
+			return false, nil
+		}
+	}
+
+	err = session.Commit()
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func deleteGroup(group *Group) (bool, error) {
 	affected, err := ormer.Engine.ID(core.PK{group.Owner, group.Name}).Delete(&Group{})
 	if err != nil {
@@ -185,6 +247,12 @@ func DeleteGroup(group *Group) (bool, error) {
 }
 
 func checkGroupName(name string) error {
+	if name == "" {
+		return errors.New("group name can't be empty")
+	}
+	if strings.Contains(name, "/") {
+		return errors.New("group name can't contain \"/\"")
+	}
 	exist, err := ormer.Engine.Exist(&Organization{Owner: "admin", Name: name})
 	if err != nil {
 		return err
@@ -281,7 +349,10 @@ func GetPaginationGroupUsers(groupId string, offset, limit int, field, value, so
 
 func GetGroupUsers(groupId string) ([]*User, error) {
 	users := []*User{}
-	owner, _ := util.GetOwnerAndNameFromId(groupId)
+	owner, _, err := util.GetOwnerAndNameFromIdWithError(groupId)
+	if err != nil {
+		return nil, err
+	}
 	names, err := userEnforcer.GetUserNamesByGroupName(groupId)
 	if err != nil {
 		return nil, err
@@ -293,22 +364,21 @@ func GetGroupUsers(groupId string) ([]*User, error) {
 	return users, nil
 }
 
+func GetGroupUsersWithoutError(groupId string) []*User {
+	users, _ := GetGroupUsers(groupId)
+	return users
+}
+
 func ExtendGroupWithUsers(group *Group) error {
 	if group == nil {
 		return nil
 	}
 
-	users, err := GetUsers(group.Owner)
-	if err != nil {
-		return err
-	}
-
 	groupId := group.GetId()
 	userIds := []string{}
-	for _, user := range users {
-		if util.InSlice(user.Groups, groupId) {
-			userIds = append(userIds, user.GetId())
-		}
+	userIds, err := userEnforcer.GetAllUsersByGroup(groupId)
+	if err != nil {
+		return err
 	}
 
 	group.Users = userIds
@@ -316,29 +386,14 @@ func ExtendGroupWithUsers(group *Group) error {
 }
 
 func ExtendGroupsWithUsers(groups []*Group) error {
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(groups))
-
 	for _, group := range groups {
-		wg.Add(1)
-		go func(group *Group) {
-			defer wg.Done()
-			err := ExtendGroupWithUsers(group)
-			if err != nil {
-				errChan <- err
-			}
-		}(group)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	for err := range errChan {
+		users, err := userEnforcer.GetAllUsersByGroup(group.GetId())
 		if err != nil {
 			return err
 		}
-	}
 
+		group.Users = users
+	}
 	return nil
 }
 

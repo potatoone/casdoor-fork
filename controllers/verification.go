@@ -160,7 +160,7 @@ func (c *ApiController) SendVerificationCode() {
 			if captchaProvider := captcha.GetCaptchaProvider(vform.CaptchaType); captchaProvider == nil {
 				c.ResponseError(c.T("general:don't support captchaProvider: ") + vform.CaptchaType)
 				return
-			} else if isHuman, err := captchaProvider.VerifyCaptcha(vform.CaptchaToken, vform.ClientSecret); err != nil {
+			} else if isHuman, err := captchaProvider.VerifyCaptcha(vform.CaptchaToken, provider.ClientId, vform.ClientSecret, provider.ClientId2); err != nil {
 				c.ResponseError(err.Error())
 				return
 			} else if !isHuman {
@@ -242,12 +242,10 @@ func (c *ApiController) SendVerificationCode() {
 		} else if vform.Method == ResetVerification {
 			user = c.getCurrentUser()
 		} else if vform.Method == MfaAuthVerification {
-			mfaProps := user.GetPreferredMfaProps(false)
+			mfaProps := user.GetMfaProps(object.EmailType, false)
 			if user != nil && util.GetMaskedEmail(mfaProps.Secret) == vform.Dest {
 				vform.Dest = mfaProps.Secret
 			}
-		} else if vform.Method == MfaSetupVerification {
-			c.SetSession(MfaDestSession, vform.Dest)
 		}
 
 		provider, err = application.GetEmailProvider(vform.Method)
@@ -260,7 +258,7 @@ func (c *ApiController) SendVerificationCode() {
 			return
 		}
 
-		sendResp = object.SendVerificationCodeToEmail(organization, user, provider, clientIp, vform.Dest)
+		sendResp = object.SendVerificationCodeToEmail(organization, user, provider, clientIp, vform.Dest, vform.Method, c.Ctx.Request.Host, application.Name)
 	case object.VerifyTypePhone:
 		if vform.Method == LoginVerification || vform.Method == ForgetVerification {
 			if user != nil && util.GetMaskedPhone(user.Phone) == vform.Dest {
@@ -282,13 +280,8 @@ func (c *ApiController) SendVerificationCode() {
 					vform.CountryCode = user.GetCountryCode(vform.CountryCode)
 				}
 			}
-
-			if vform.Method == MfaSetupVerification {
-				c.SetSession(MfaCountryCodeSession, vform.CountryCode)
-				c.SetSession(MfaDestSession, vform.Dest)
-			}
 		} else if vform.Method == MfaAuthVerification {
-			mfaProps := user.GetPreferredMfaProps(false)
+			mfaProps := user.GetMfaProps(object.SmsType, false)
 			if user != nil && util.GetMaskedPhone(mfaProps.Secret) == vform.Dest {
 				vform.Dest = mfaProps.Secret
 			}
@@ -356,7 +349,7 @@ func (c *ApiController) VerifyCaptcha() {
 		return
 	}
 
-	isValid, err := provider.VerifyCaptcha(vform.CaptchaToken, vform.ClientSecret)
+	isValid, err := provider.VerifyCaptcha(vform.CaptchaToken, captchaProvider.ClientId, vform.ClientSecret, captchaProvider.ClientId2)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -443,7 +436,8 @@ func (c *ApiController) ResetEmailOrPhone() {
 	switch destType {
 	case object.VerifyTypeEmail:
 		user.Email = dest
-		_, err = object.SetUserField(user, "email", user.Email)
+		user.EmailVerified = true
+		_, err = object.UpdateUser(user.GetId(), user, []string{"email", "email_verified"}, false)
 	case object.VerifyTypePhone:
 		user.Phone = dest
 		_, err = object.SetUserField(user, "phone", user.Phone)
@@ -517,20 +511,28 @@ func (c *ApiController) VerifyCode() {
 		}
 	}
 
-	result, err := object.CheckVerificationCode(checkDest, authForm.Code, c.GetAcceptLanguage())
+	passed, err := c.checkOrgMasterVerificationCode(user, authForm.Code)
 	if err != nil {
 		c.ResponseError(c.T(err.Error()))
 		return
 	}
-	if result.Code != object.VerificationSuccess {
-		c.ResponseError(result.Msg)
-		return
-	}
 
-	err = object.DisableVerificationCode(checkDest)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
+	if !passed {
+		result, err := object.CheckVerificationCode(checkDest, authForm.Code, c.GetAcceptLanguage())
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if result.Code != object.VerificationSuccess {
+			c.ResponseError(result.Msg)
+			return
+		}
+
+		err = object.DisableVerificationCode(checkDest)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	c.SetSession("verifiedCode", authForm.Code)

@@ -16,27 +16,22 @@
 
 package object
 
-import (
-	"crypto/tls"
+import "github.com/casdoor/casdoor/email"
 
-	"github.com/casdoor/casdoor/email"
-	"github.com/casdoor/gomail/v2"
-)
-
-func getDialer(provider *Provider) *gomail.Dialer {
-	dialer := &gomail.Dialer{}
-	dialer = gomail.NewDialer(provider.Host, provider.Port, provider.ClientId, provider.ClientSecret)
-	if provider.Type == "SUBMAIL" {
-		dialer.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+// TestSmtpServer Test the SMTP server
+func TestSmtpServer(provider *Provider) error {
+	smtpEmailProvider := email.NewSmtpEmailProvider(provider.ClientId, provider.ClientSecret, provider.Host, provider.Port, provider.Type, provider.DisableSsl)
+	sender, err := smtpEmailProvider.Dialer.Dial()
+	if err != nil {
+		return err
 	}
+	defer sender.Close()
 
-	dialer.SSL = !provider.DisableSsl
-
-	return dialer
+	return nil
 }
 
 func SendEmail(provider *Provider, title string, content string, dest string, sender string) error {
-	emailProvider := email.GetEmailProvider(provider.Type, provider.ClientId, provider.ClientSecret, provider.Host, provider.Port, provider.DisableSsl, provider.Endpoint, provider.Method)
+	emailProvider := email.GetEmailProvider(provider.Type, provider.ClientId, provider.ClientSecret, provider.Host, provider.Port, provider.DisableSsl, provider.Endpoint, provider.Method, provider.HttpHeaders, provider.UserMapping, provider.IssuerUrl)
 
 	fromAddress := provider.ClientId2
 	if fromAddress == "" {
@@ -49,17 +44,4 @@ func SendEmail(provider *Provider, title string, content string, dest string, se
 	}
 
 	return emailProvider.Send(fromAddress, fromName, dest, title, content)
-}
-
-// DailSmtpServer Dail Smtp server
-func DailSmtpServer(provider *Provider) error {
-	dialer := getDialer(provider)
-
-	sender, err := dialer.Dial()
-	if err != nil {
-		return err
-	}
-	defer sender.Close()
-
-	return nil
 }

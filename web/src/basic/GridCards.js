@@ -31,12 +31,12 @@ const GridCards = (props) => {
 
   return (
     Setting.isMobile() ? (
-      <Card bodyStyle={{padding: 0}}>
+      <Card styles={{body: {padding: 0}}}>
         {items.map(item => <SingleCard key={item.link} logo={item.logo} link={item.link} title={item.name} desc={item.description} isSingle={items.length === 1} />)}
       </Card>
     ) : (
-      <div style={{margin: "0 15px"}}>
-        <Row>
+      <div style={{width: "100%", padding: "0 100px"}}>
+        <Row style={{justifyContent: "center"}}>
           {items.map(item => <SingleCard logo={item.logo} link={item.link} title={item.name} desc={item.description} time={item.createdTime} isSingle={items.length === 1} key={item.name} />)}
         </Row>
       </div>

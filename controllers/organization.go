@@ -98,6 +98,10 @@ func (c *ApiController) GetOrganization() {
 		return
 	}
 
+	if organization != nil && organization.MfaRememberInHours == 0 {
+		organization.MfaRememberInHours = 12
+	}
+
 	c.ResponseOk(organization)
 }
 
@@ -124,7 +128,9 @@ func (c *ApiController) UpdateOrganization() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateOrganization(id, &organization))
+	isGlobalAdmin, _ := c.isGlobalAdmin()
+
+	c.Data["json"] = wrapActionResponse(object.UpdateOrganization(id, &organization, isGlobalAdmin))
 	c.ServeJSON()
 }
 

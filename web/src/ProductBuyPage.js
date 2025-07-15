@@ -123,6 +123,24 @@ class ProductBuyPage extends React.Component {
       return "$";
     } else if (product?.currency === "CNY") {
       return "￥";
+    } else if (product?.currency === "EUR") {
+      return "€";
+    } else if (product?.currency === "JPY") {
+      return "¥";
+    } else if (product?.currency === "GBP") {
+      return "£";
+    } else if (product?.currency === "AUD") {
+      return "A$";
+    } else if (product?.currency === "CAD") {
+      return "C$";
+    } else if (product?.currency === "CHF") {
+      return "CHF";
+    } else if (product?.currency === "HKD") {
+      return "HK$";
+    } else if (product?.currency === "SGD") {
+      return "S$";
+    } else if (product?.currency === "BRL") {
+      return "R$";
     } else {
       return "(Unknown currency)";
     }
@@ -222,6 +240,8 @@ class ProductBuyPage extends React.Component {
       text = i18next.t("product:PayPal");
     } else if (provider.type === "Stripe") {
       text = i18next.t("product:Stripe");
+    } else if (provider.type === "AirWallex") {
+      text = i18next.t("product:AirWallex");
     }
 
     return (

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import React from "react";
-import {Button, Card, Col, Input, InputNumber, Radio, Row, Select, Switch} from "antd";
+import {Button, Card, Col, Input, InputNumber, Popconfirm, Radio, Row, Select, Switch} from "antd";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as ApplicationBackend from "./backend/ApplicationBackend";
 import * as LdapBackend from "./backend/LdapBackend";
@@ -26,6 +26,8 @@ import LdapTable from "./table/LdapTable";
 import AccountTable from "./table/AccountTable";
 import ThemeEditor from "./common/theme/ThemeEditor";
 import MfaTable from "./table/MfaTable";
+import {NavItemTree} from "./common/NavItemTree";
+import {WidgetItemTree} from "./common/WidgetItemTree";
 
 const {Option} = Select;
 
@@ -268,13 +270,38 @@ class OrganizationEditPage extends React.Component {
             }} />
           </Col>
         </Row>
+        {
+          this.state.organization.name === "built-in" ? (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 19 : 2}>
+                {Setting.getLabel(i18next.t("organization:Has privilege consent"), i18next.t("organization:Has privilege consent - Tooltip"))} :
+              </Col>
+              <Col span={1} >
+                {
+                  !this.state.organization.hasPrivilegeConsent ? (
+                    <Popconfirm
+                      title={i18next.t("organization:Has privilege consent warning")}
+                      onConfirm={() => {this.updateOrganizationField("hasPrivilegeConsent", !this.state.organization.hasPrivilegeConsent);}}
+                      okText={i18next.t("general:OK")}
+                      cancelText={i18next.t("general:Cancel")}
+                      styles={{root: {width: "800px"}}}
+                    >
+                      <Switch checked={this.state.organization.hasPrivilegeConsent} />
+                    </Popconfirm>
+                  ) :
+                    <Switch checked={this.state.organization.hasPrivilegeConsent} onChange={() => {this.updateOrganizationField("hasPrivilegeConsent", !this.state.organization.hasPrivilegeConsent);}} />
+                }
+              </Col>
+            </Row>
+          ) : null
+        }
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("general:Password type"), i18next.t("general:Password type - Tooltip"))} :
           </Col>
           <Col span={22} >
             <Select virtual={false} style={{width: "100%"}} value={this.state.organization.passwordType} onChange={(value => {this.updateOrganizationField("passwordType", value);})}
-              options={["plain", "salt", "sha512-salt", "md5-salt", "bcrypt", "pbkdf2-salt", "argon2id"].map(item => Setting.getOption(item, item))}
+              options={["plain", "salt", "sha512-salt", "md5-salt", "bcrypt", "pbkdf2-salt", "argon2id", "pbkdf2-django"].map(item => Setting.getOption(item, item))}
             />
           </Col>
         </Row>
@@ -422,6 +449,18 @@ class OrganizationEditPage extends React.Component {
         </Row>
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("organization:User types"), i18next.t("organization:User types - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <Select virtual={false} mode="tags" style={{width: "100%"}} value={this.state.organization.userTypes} onChange={(value => {this.updateOrganizationField("userTypes", value);})}>
+              {
+                this.state.organization.userTypes?.map((item, index) => <Option key={index} value={item}>{item}</Option>)
+              }
+            </Select>
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("organization:Tags"), i18next.t("organization:Tags - Tooltip"))} :
           </Col>
           <Col span={22} >
@@ -524,6 +563,36 @@ class OrganizationEditPage extends React.Component {
         </Row>
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("organization:Navbar items"), i18next.t("organization:Navbar items - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <NavItemTree
+              disabled={!Setting.isAdminUser(this.props.account)}
+              checkedKeys={this.state.organization.navItems ?? ["all"]}
+              defaultExpandedKeys={["all"]}
+              onCheck={(checked, _) => {
+                this.updateOrganizationField("navItems", checked);
+              }}
+            />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("organization:Widget items"), i18next.t("organization:Widget items - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <WidgetItemTree
+              disabled={!Setting.isAdminUser(this.props.account)}
+              checkedKeys={this.state.organization.widgetItems ?? ["all"]}
+              defaultExpandedKeys={["all"]}
+              onCheck={(checked, _) => {
+                this.updateOrganizationField("widgetItems", checked);
+              }}
+            />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
             {Setting.getLabel(i18next.t("organization:Account items"), i18next.t("organization:Account items - Tooltip"))} :
           </Col>
           <Col span={22} >
@@ -532,6 +601,16 @@ class OrganizationEditPage extends React.Component {
               table={this.state.organization.accountItems}
               onUpdateTable={(value) => {this.updateOrganizationField("accountItems", value);}}
             />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("application:MFA remember time"), i18next.t("application:MFA remember time - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <InputNumber style={{width: "150px"}} value={this.state.organization.mfaRememberInHours} min={1} step={1} precision={0} addonAfter="Hours" onChange={value => {
+              this.updateOrganizationField("mfaRememberInHours", value);
+            }} />
           </Col>
         </Row>
         <Row style={{marginTop: "20px"}} >

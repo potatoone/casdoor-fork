@@ -14,7 +14,8 @@
 
 import React from "react";
 import {Link} from "react-router-dom";
-import {Button, Table} from "antd";
+import {Button, Table, Tooltip, Upload} from "antd";
+import {UploadOutlined} from "@ant-design/icons";
 import moment from "moment";
 import * as Setting from "./Setting";
 import * as GroupBackend from "./backend/GroupBackend";
@@ -33,18 +34,6 @@ class GroupListPage extends BaseListPage {
   }
   UNSAFE_componentWillMount() {
     super.UNSAFE_componentWillMount();
-    this.getGroups(this.state.owner);
-  }
-
-  getGroups(organizationName) {
-    GroupBackend.getGroups(organizationName)
-      .then((res) => {
-        if (res.status === "ok") {
-          this.setState({
-            groups: res.data,
-          });
-        }
-      });
   }
 
   newGroup() {
@@ -97,6 +86,42 @@ class GroupListPage extends BaseListPage {
       .catch(error => {
         Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
       });
+  }
+
+  uploadFile(info) {
+    const {status, response: res} = info.file;
+    if (status === "done") {
+      if (res.status === "ok") {
+        Setting.showMessage("success", "Groups uploaded successfully, refreshing the page");
+        const {pagination} = this.state;
+        this.fetch({pagination});
+      } else {
+        Setting.showMessage("error", `Groups failed to upload: ${res.msg}`);
+      }
+    } else if (status === "error") {
+      Setting.showMessage("error", "File failed to upload");
+    }
+  }
+
+  renderUpload() {
+    const props = {
+      name: "file",
+      accept: ".xlsx",
+      method: "post",
+      action: `${Setting.ServerUrl}/api/upload-groups`,
+      withCredentials: true,
+      onChange: (info) => {
+        this.uploadFile(info);
+      },
+    };
+
+    return (
+      <Upload {...props}>
+        <Button icon={<UploadOutlined />} id="upload-button" type="primary" size="small">
+          {i18next.t("group:Upload (.xlsx)")}
+        </Button>
+      </Upload>
+    );
   }
 
   renderTable(data) {
@@ -188,12 +213,8 @@ class GroupListPage extends BaseListPage {
               {record.parentId}
             </Link>;
           }
-          const parentGroup = this.state.groups.find((group) => group.name === text);
-          if (parentGroup === undefined) {
-            return "";
-          }
-          return <Link to={`/groups/${parentGroup.owner}/${parentGroup.name}`}>
-            {parentGroup?.displayName}
+          return <Link to={`/groups/${record.owner}/${record.parentId}`}>
+            {record?.parentName}
           </Link>;
         },
       },
@@ -215,16 +236,19 @@ class GroupListPage extends BaseListPage {
         width: "180px",
         fixed: (Setting.isMobile()) ? "false" : "right",
         render: (text, record, index) => {
-          const haveChildren = this.state.groups.find((group) => group.parentId === record.id) !== undefined;
           return (
             <div>
               <Button style={{marginTop: "10px", marginBottom: "10px", marginRight: "10px"}} type="primary" onClick={() => this.props.history.push(`/groups/${record.owner}/${record.name}`)}>{i18next.t("general:Edit")}</Button>
-              <PopconfirmModal
-                disabled={haveChildren}
-                title={i18next.t("general:Sure to delete") + `: ${record.name} ?`}
-                onConfirm={() => this.deleteGroup(index)}
-              >
-              </PopconfirmModal>
+              {
+                record.haveChildren ? <Tooltip placement="topLeft" title={i18next.t("group:You need to delete all subgroups first. You can view the subgroups in the left group tree of the [Organizations] -> [Groups] page")}>
+                  <Button disabled type="primary" danger>{i18next.t("general:Delete")}</Button>
+                </Tooltip> :
+                  <PopconfirmModal
+                    title={i18next.t("general:Sure to delete") + `: ${record.name} ?`}
+                    onConfirm={() => this.deleteGroup(index)}
+                  >
+                  </PopconfirmModal>
+              }
             </div>
           );
         },
@@ -244,7 +268,10 @@ class GroupListPage extends BaseListPage {
           title={() => (
             <div>
               {i18next.t("general:Groups")}&nbsp;&nbsp;&nbsp;&nbsp;
-              <Button type="primary" size="small" onClick={this.addGroup.bind(this)}>{i18next.t("general:Add")}</Button>
+              <Button style={{marginRight: "5px"}} type="primary" size="small" onClick={this.addGroup.bind(this)}>{i18next.t("general:Add")}</Button>
+              {
+                this.renderUpload()
+              }
             </div>
           )}
           loading={this.state.loading}

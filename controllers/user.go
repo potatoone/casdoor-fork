@@ -197,8 +197,8 @@ func (c *ApiController) GetUser() {
 		return
 	}
 
+	var organization *object.Organization
 	if user != nil {
-		var organization *object.Organization
 		organization, err = object.GetOrganizationByUser(user)
 		if err != nil {
 			c.ResponseError(err.Error())
@@ -235,6 +235,14 @@ func (c *ApiController) GetUser() {
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
+	}
+
+	if organization != nil && user != nil {
+		user, err = object.GetFilteredUser(user, c.IsAdmin(), c.IsAdminOrSelf(user), organization.AccountItems)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	c.ResponseOk(user)
@@ -282,13 +290,6 @@ func (c *ApiController) UpdateUser() {
 		return
 	}
 
-	if c.Input().Get("allowEmpty") == "" {
-		if user.DisplayName == "" {
-			c.ResponseError(c.T("user:Display name cannot be empty"))
-			return
-		}
-	}
-
 	if user.MfaEmailEnabled && user.Email == "" {
 		c.ResponseError(c.T("user:MFA email is enabled but email is empty"))
 		return
@@ -310,7 +311,8 @@ func (c *ApiController) UpdateUser() {
 	}
 
 	isAdmin := c.IsAdmin()
-	if pass, err := object.CheckPermissionForUpdateUser(oldUser, &user, isAdmin, c.GetAcceptLanguage()); !pass {
+	allowDisplayNameEmpty := c.Input().Get("allowEmpty") != ""
+	if pass, err := object.CheckPermissionForUpdateUser(oldUser, &user, isAdmin, allowDisplayNameEmpty, c.GetAcceptLanguage()); !pass {
 		c.ResponseError(err)
 		return
 	}
@@ -353,13 +355,7 @@ func (c *ApiController) AddUser() {
 		return
 	}
 
-	count, err := object.GetUserCount("", "", "", "")
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	if err := checkQuotaForUser(int(count)); err != nil {
+	if err := checkQuotaForUser(); err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
@@ -371,7 +367,7 @@ func (c *ApiController) AddUser() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddUser(&user))
+	c.Data["json"] = wrapActionResponse(object.AddUser(&user, c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -463,10 +459,10 @@ func (c *ApiController) SetPassword() {
 	newPassword := c.Ctx.Request.Form.Get("newPassword")
 	code := c.Ctx.Request.Form.Get("code")
 
-	//if userOwner == "built-in" && userName == "admin" {
+	// if userOwner == "built-in" && userName == "admin" {
 	//	c.ResponseError(c.T("auth:Unauthorized operation"))
 	//	return
-	//}
+	// }
 
 	if strings.Contains(newPassword, " ") {
 		c.ResponseError(c.T("user:New password cannot contain blank space."))
@@ -474,6 +470,16 @@ func (c *ApiController) SetPassword() {
 	}
 
 	userId := util.GetId(userOwner, userName)
+
+	user, err := object.GetUser(userId)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if user == nil {
+		c.ResponseError(fmt.Sprintf(c.T("general:The user: %s doesn't exist"), userId))
+		return
+	}
 
 	requestUserId := c.GetSessionUsername()
 	if requestUserId == "" && code == "" {
@@ -518,7 +524,11 @@ func (c *ApiController) SetPassword() {
 			}
 		}
 	} else if code == "" {
-		err = object.CheckPassword(targetUser, oldPassword, c.GetAcceptLanguage())
+		if user.Ldap == "" {
+			err = object.CheckPassword(targetUser, oldPassword, c.GetAcceptLanguage())
+		} else {
+			err = object.CheckLdapUserPassword(targetUser, oldPassword, c.GetAcceptLanguage())
+		}
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -537,7 +547,7 @@ func (c *ApiController) SetPassword() {
 		return
 	}
 	if organization == nil {
-		c.ResponseError(fmt.Sprintf(c.T("the organization: %s is not found"), targetUser.Owner))
+		c.ResponseError(fmt.Sprintf(c.T("auth:the organization: %s is not found"), targetUser.Owner))
 		return
 	}
 
@@ -563,7 +573,16 @@ func (c *ApiController) SetPassword() {
 	targetUser.NeedUpdatePassword = false
 	targetUser.LastChangePasswordTime = util.GetCurrentTime()
 
-	_, err = object.UpdateUser(userId, targetUser, []string{"password", "need_update_password", "password_type", "last_change_password_time"}, false)
+	if user.Ldap == "" {
+		_, err = object.UpdateUser(userId, targetUser, []string{"password", "password_salt", "need_update_password", "password_type", "last_change_password_time"}, false)
+	} else {
+		if isAdmin {
+			err = object.ResetLdapPassword(targetUser, "", newPassword, c.GetAcceptLanguage())
+		} else {
+			err = object.ResetLdapPassword(targetUser, oldPassword, newPassword, c.GetAcceptLanguage())
+		}
+	}
+
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -585,7 +604,11 @@ func (c *ApiController) CheckUserPassword() {
 		return
 	}
 
-	_, err = object.CheckUserPassword(user.Owner, user.Name, user.Password, c.GetAcceptLanguage())
+	/*
+	 * Verified password with user as subject, if field ldap not empty,
+	 * then `isPasswordWithLdapEnabled` is true
+	 */
+	_, err = object.CheckUserPassword(user.Owner, user.Name, user.Password, c.GetAcceptLanguage(), false, false, user.Ldap != "")
 	if err != nil {
 		c.ResponseError(err.Error())
 	} else {
@@ -682,7 +705,7 @@ func (c *ApiController) RemoveUserFromGroup() {
 		return
 	}
 
-	affected, err := object.DeleteGroupForUser(util.GetId(owner, name), groupName)
+	affected, err := object.DeleteGroupForUser(util.GetId(owner, name), util.GetId(owner, groupName))
 	if err != nil {
 		c.ResponseError(err.Error())
 		return

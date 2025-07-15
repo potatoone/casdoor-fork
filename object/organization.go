@@ -57,20 +57,22 @@ type Organization struct {
 	Logo                   string     `xorm:"varchar(200)" json:"logo"`
 	LogoDark               string     `xorm:"varchar(200)" json:"logoDark"`
 	Favicon                string     `xorm:"varchar(200)" json:"favicon"`
+	HasPrivilegeConsent    bool       `xorm:"bool" json:"hasPrivilegeConsent"`
 	PasswordType           string     `xorm:"varchar(100)" json:"passwordType"`
 	PasswordSalt           string     `xorm:"varchar(100)" json:"passwordSalt"`
 	PasswordOptions        []string   `xorm:"varchar(100)" json:"passwordOptions"`
 	PasswordObfuscatorType string     `xorm:"varchar(100)" json:"passwordObfuscatorType"`
 	PasswordObfuscatorKey  string     `xorm:"varchar(100)" json:"passwordObfuscatorKey"`
 	PasswordExpireDays     int        `json:"passwordExpireDays"`
-	CountryCodes           []string   `xorm:"varchar(200)"  json:"countryCodes"`
+	CountryCodes           []string   `xorm:"mediumtext"  json:"countryCodes"`
 	DefaultAvatar          string     `xorm:"varchar(200)" json:"defaultAvatar"`
 	DefaultApplication     string     `xorm:"varchar(100)" json:"defaultApplication"`
+	UserTypes              []string   `xorm:"mediumtext" json:"userTypes"`
 	Tags                   []string   `xorm:"mediumtext" json:"tags"`
 	Languages              []string   `xorm:"varchar(255)" json:"languages"`
 	ThemeData              *ThemeData `xorm:"json" json:"themeData"`
-	MasterPassword         string     `xorm:"varchar(100)" json:"masterPassword"`
-	DefaultPassword        string     `xorm:"varchar(100)" json:"defaultPassword"`
+	MasterPassword         string     `xorm:"varchar(200)" json:"masterPassword"`
+	DefaultPassword        string     `xorm:"varchar(200)" json:"defaultPassword"`
 	MasterVerificationCode string     `xorm:"varchar(100)" json:"masterVerificationCode"`
 	IpWhitelist            string     `xorm:"varchar(200)" json:"ipWhitelist"`
 	InitScore              int        `json:"initScore"`
@@ -79,9 +81,12 @@ type Organization struct {
 	UseEmailAsUsername     bool       `json:"useEmailAsUsername"`
 	EnableTour             bool       `json:"enableTour"`
 	IpRestriction          string     `json:"ipRestriction"`
+	NavItems               []string   `xorm:"varchar(1000)" json:"navItems"`
+	WidgetItems            []string   `xorm:"varchar(1000)" json:"widgetItems"`
 
-	MfaItems     []*MfaItem     `xorm:"varchar(300)" json:"mfaItems"`
-	AccountItems []*AccountItem `xorm:"varchar(5000)" json:"accountItems"`
+	MfaItems           []*MfaItem     `xorm:"varchar(300)" json:"mfaItems"`
+	MfaRememberInHours int            `json:"mfaRememberInHours"`
+	AccountItems       []*AccountItem `xorm:"varchar(5000)" json:"accountItems"`
 }
 
 func GetOrganizationCount(owner, name, field, value string) (int64, error) {
@@ -151,7 +156,10 @@ func getOrganization(owner string, name string) (*Organization, error) {
 }
 
 func GetOrganization(id string) (*Organization, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return nil, err
+	}
 	return getOrganization(owner, name)
 }
 
@@ -192,9 +200,10 @@ func GetMaskedOrganizations(organizations []*Organization, errs ...error) ([]*Or
 	return organizations, nil
 }
 
-func UpdateOrganization(id string, organization *Organization) (bool, error) {
+func UpdateOrganization(id string, organization *Organization, isGlobalAdmin bool) (bool, error) {
 	owner, name := util.GetOwnerAndNameFromId(id)
-	if org, err := getOrganization(owner, name); err != nil {
+	org, err := getOrganization(owner, name)
+	if err != nil {
 		return false, err
 	} else if org == nil {
 		return false, nil
@@ -214,9 +223,14 @@ func UpdateOrganization(id string, organization *Organization) (bool, error) {
 	if organization.MasterPassword != "" && organization.MasterPassword != "***" {
 		credManager := cred.GetCredManager(organization.PasswordType)
 		if credManager != nil {
-			hashedPassword := credManager.GetHashedPassword(organization.MasterPassword, "", organization.PasswordSalt)
+			hashedPassword := credManager.GetHashedPassword(organization.MasterPassword, organization.PasswordSalt)
 			organization.MasterPassword = hashedPassword
 		}
+	}
+
+	if !isGlobalAdmin {
+		organization.NavItems = org.NavItems
+		organization.WidgetItems = org.WidgetItems
 	}
 
 	session := ormer.Engine.ID(core.PK{owner, name}).AllCols()
@@ -523,7 +537,13 @@ func IsNeedPromptMfa(org *Organization, user *User) bool {
 	if org == nil || user == nil {
 		return false
 	}
-	for _, item := range org.MfaItems {
+
+	mfaItems := org.MfaItems
+
+	if len(user.MfaItems) > 0 {
+		mfaItems = user.MfaItems
+	}
+	for _, item := range mfaItems {
 		if item.Rule == "Required" {
 			if item.Name == EmailType && !user.MfaEmailEnabled {
 				return true

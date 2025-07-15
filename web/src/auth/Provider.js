@@ -68,6 +68,7 @@ const authInfo = {
   Lark: {
     // scope: "email",
     endpoint: "https://open.feishu.cn/open-apis/authen/v1/index",
+    endpoint2: "https://accounts.larksuite.com/open-apis/authen/v1/authorize",
   },
   GitLab: {
     scope: "read_user+profile",
@@ -118,6 +119,10 @@ const authInfo = {
   Douyin: {
     scope: "user_info",
     endpoint: "https://open.douyin.com/platform/oauth/connect",
+  },
+  Kwai: {
+    scope: "user_info",
+    endpoint: "https://open.kuaishou.com/oauth2/connect",
   },
   Custom: {
     endpoint: "https://example.com/",
@@ -274,7 +279,7 @@ const authInfo = {
     endpoint: "https://www.tiktok.com/auth/authorize/",
   },
   Tumblr: {
-    scope: "email",
+    scope: "basic",
     endpoint: "https://www.tumblr.com/oauth2/authorize",
   },
   Twitch: {
@@ -383,7 +388,8 @@ export function getAuthUrl(application, provider, method, code) {
   }
 
   let endpoint = authInfo[provider.type].endpoint;
-  let redirectUri = `${window.location.origin}/callback`;
+  const redirectOrigin = application.forcedRedirectOrigin ? application.forcedRedirectOrigin : window.location.origin;
+  let redirectUri = `${redirectOrigin}/callback`;
   let scope = authInfo[provider.type].scope;
   const isShortState = (provider.type === "WeChat" && navigator.userAgent.includes("MicroMessenger")) || (provider.type === "Twitter");
   const state = Util.getStateFromQueryParams(application.name, provider.name, method, isShortState);
@@ -394,9 +400,15 @@ export function getAuthUrl(application, provider, method, code) {
       endpoint = endpoint.replace("common", provider.domain);
     }
   } else if (provider.type === "Apple") {
-    redirectUri = `${window.location.origin}/api/callback`;
+    redirectUri = `${redirectOrigin}/api/callback`;
   } else if (provider.type === "Google" && provider.disableSsl) {
     scope += "+https://www.googleapis.com/auth/user.phonenumbers.read";
+  } else if (provider.type === "Nextcloud") {
+    if (provider.domain) {
+      endpoint = `${provider.domain}/apps/oauth2/authorize`;
+    }
+  } else if (provider.type === "Lark" && provider.disableSsl) {
+    endpoint = authInfo[provider.type].endpoint2;
   }
 
   if (provider.type === "Google" || provider.type === "GitHub" || provider.type === "Facebook"
@@ -416,13 +428,13 @@ export function getAuthUrl(application, provider, method, code) {
   } else if (provider.type === "AzureADB2C") {
     return `https://${provider.domain}.b2clogin.com/${provider.domain}.onmicrosoft.com/${provider.appId}/oauth2/v2.0/authorize?client_id=${provider.clientId}&nonce=defaultNonce&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${state}&prompt=login`;
   } else if (provider.type === "DingTalk") {
-    return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&prompt=consent&state=${state}`;
+    return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&prompt=login%20consent&state=${state}`;
   } else if (provider.type === "WeChat") {
     if (navigator.userAgent.includes("MicroMessenger")) {
       return `${authInfo[provider.type].mpEndpoint}?appid=${provider.clientId2}&redirect_uri=${redirectUri}&state=${state}&scope=${authInfo[provider.type].mpScope}&response_type=code#wechat_redirect`;
     } else {
       if (provider.clientId2 && provider?.disableSsl && provider?.signName === "media") {
-        return `${window.location.origin}/callback?state=${state}&code=${"wechat_oa:" + code}`;
+        return `${redirectOrigin}/callback?state=${state}&code=${"wechat_oa:" + code}`;
       }
       return `${endpoint}?appid=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code&state=${state}#wechat_redirect`;
     }
@@ -451,6 +463,9 @@ export function getAuthUrl(application, provider, method, code) {
       return `https://error:not-supported-provider-sub-type:${provider.subType}`;
     }
   } else if (provider.type === "Lark") {
+    if (provider.disableSsl) {
+      redirectUri = encodeURIComponent(redirectUri);
+    }
     return `${endpoint}?app_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}`;
   } else if (provider.type === "ADFS") {
     return `${provider.domain}/adfs/oauth2/authorize?client_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&nonce=casdoor&scope=openid`;
@@ -465,11 +480,13 @@ export function getAuthUrl(application, provider, method, code) {
   } else if (provider.type === "Apple") {
     return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code%20id_token&scope=${scope}&response_mode=form_post`;
   } else if (provider.type === "Steam") {
-    return `${endpoint}?openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.mode=checkid_setup&openid.ns=http://specs.openid.net/auth/2.0&openid.realm=${window.location.origin}&openid.return_to=${redirectUri}?state=${state}`;
+    return `${endpoint}?openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.mode=checkid_setup&openid.ns=http://specs.openid.net/auth/2.0&openid.realm=${redirectOrigin}&openid.return_to=${redirectUri}?state=${state}`;
   } else if (provider.type === "Okta") {
     return `${provider.domain}/v1/authorize?client_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}`;
   } else if (provider.type === "Douyin" || provider.type === "TikTok") {
     return `${endpoint}?client_key=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}`;
+  } else if (provider.type === "Kwai") {
+    return `${endpoint}?app_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}`;
   } else if (provider.type === "Custom") {
     return `${provider.customAuthUrl}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${provider.scopes}&response_type=code&state=${state}`;
   } else if (provider.type === "Bilibili") {

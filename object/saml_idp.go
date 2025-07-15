@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	saml "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -337,6 +337,9 @@ func GetSamlResponse(application *Application, user *User, samlRequest string, h
 		authnRequest.AssertionConsumerServiceURL = application.SamlReplyUrl
 	} else if authnRequest.AssertionConsumerServiceURL == "" {
 		return "", "", "", fmt.Errorf("err: SAML request don't has attribute 'AssertionConsumerServiceURL' in <samlp:AuthnRequest>")
+	}
+	if authnRequest.ProtocolBinding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" {
+		method = "POST"
 	}
 
 	_, originBackend := getOriginFromHost(host)

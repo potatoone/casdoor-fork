@@ -16,6 +16,8 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/beego/beego/utils/pagination"
 	"github.com/casdoor/casdoor/object"
@@ -170,12 +172,13 @@ func (c *ApiController) GetOAuthToken() {
 	tag := c.Input().Get("tag")
 	avatar := c.Input().Get("avatar")
 	refreshToken := c.Input().Get("refresh_token")
+	deviceCode := c.Input().Get("device_code")
 
 	if clientId == "" && clientSecret == "" {
 		clientId, clientSecret, _ = c.Ctx.Request.BasicAuth()
 	}
 
-	if len(c.Ctx.Input.RequestBody) != 0 {
+	if len(c.Ctx.Input.RequestBody) != 0 && grantType != "urn:ietf:params:oauth:grant-type:device_code" {
 		// If clientId is empty, try to read data from RequestBody
 		var tokenRequest TokenRequest
 		err := json.Unmarshal(c.Ctx.Input.RequestBody, &tokenRequest)
@@ -217,6 +220,46 @@ func (c *ApiController) GetOAuthToken() {
 				refreshToken = tokenRequest.RefreshToken
 			}
 		}
+	}
+
+	if deviceCode != "" {
+		deviceAuthCache, ok := object.DeviceAuthMap.Load(deviceCode)
+		if !ok {
+			c.Data["json"] = &object.TokenError{
+				Error:            "expired_token",
+				ErrorDescription: "token is expired",
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			c.SetTokenErrorHttpStatus()
+			return
+		}
+
+		deviceAuthCacheCast := deviceAuthCache.(object.DeviceAuthCache)
+		if !deviceAuthCacheCast.UserSignIn {
+			c.Data["json"] = &object.TokenError{
+				Error:            "authorization_pending",
+				ErrorDescription: "authorization pending",
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			c.SetTokenErrorHttpStatus()
+			return
+		}
+
+		if deviceAuthCacheCast.RequestAt.Add(time.Second * 120).Before(time.Now()) {
+			c.Data["json"] = &object.TokenError{
+				Error:            "expired_token",
+				ErrorDescription: "token is expired",
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			c.SetTokenErrorHttpStatus()
+			return
+		}
+		object.DeviceAuthMap.Delete(deviceCode)
+
+		username = deviceAuthCacheCast.UserName
 	}
 
 	host := c.Ctx.Request.Host
@@ -321,35 +364,49 @@ func (c *ApiController) IntrospectToken() {
 		return
 	}
 
-	tokenTypeHint := c.Input().Get("token_type_hint")
-	token, err := object.GetTokenByTokenValue(tokenValue, tokenTypeHint)
-	if err != nil {
-		c.ResponseTokenError(err.Error())
-		return
-	}
-	if token == nil {
+	respondWithInactiveToken := func() {
 		c.Data["json"] = &object.IntrospectionResponse{Active: false}
 		c.ServeJSON()
-		return
 	}
 
-	if application.TokenFormat == "JWT-Standard" {
-		jwtToken, err := object.ParseStandardJwtTokenByApplication(tokenValue, application)
-		if err != nil || jwtToken.Valid() != nil {
-			// and token revoked case. but we not implement
-			// TODO: 2022-03-03 add token revoked check, when we implemented the Token Revocation(rfc7009) Specs.
-			// refs: https://tools.ietf.org/html/rfc7009
+	tokenTypeHint := c.Input().Get("token_type_hint")
+	var token *object.Token
+	if tokenTypeHint != "" {
+		token, err = object.GetTokenByTokenValue(tokenValue, tokenTypeHint)
+		if err != nil {
+			c.ResponseTokenError(err.Error())
+			return
+		}
+		if token == nil || token.ExpiresIn <= 0 {
+			respondWithInactiveToken()
+			return
+		}
+
+		if token.ExpiresIn <= 0 {
 			c.Data["json"] = &object.IntrospectionResponse{Active: false}
 			c.ServeJSON()
 			return
 		}
+	}
 
-		c.Data["json"] = &object.IntrospectionResponse{
+	var introspectionResponse object.IntrospectionResponse
+
+	if application.TokenFormat == "JWT-Standard" {
+		jwtToken, err := object.ParseStandardJwtTokenByApplication(tokenValue, application)
+		if err != nil {
+			// and token revoked case. but we not implement
+			// TODO: 2022-03-03 add token revoked check, when we implemented the Token Revocation(rfc7009) Specs.
+			// refs: https://tools.ietf.org/html/rfc7009
+			respondWithInactiveToken()
+			return
+		}
+
+		introspectionResponse = object.IntrospectionResponse{
 			Active:    true,
 			Scope:     jwtToken.Scope,
 			ClientId:  clientId,
-			Username:  token.User,
-			TokenType: token.TokenType,
+			Username:  jwtToken.Name,
+			TokenType: jwtToken.TokenType,
 			Exp:       jwtToken.ExpiresAt.Unix(),
 			Iat:       jwtToken.IssuedAt.Unix(),
 			Nbf:       jwtToken.NotBefore.Unix(),
@@ -358,33 +415,66 @@ func (c *ApiController) IntrospectToken() {
 			Iss:       jwtToken.Issuer,
 			Jti:       jwtToken.ID,
 		}
-		c.ServeJSON()
-		return
+	} else {
+		jwtToken, err := object.ParseJwtTokenByApplication(tokenValue, application)
+		if err != nil {
+			// and token revoked case. but we not implement
+			// TODO: 2022-03-03 add token revoked check, when we implemented the Token Revocation(rfc7009) Specs.
+			// refs: https://tools.ietf.org/html/rfc7009
+			respondWithInactiveToken()
+			return
+		}
+
+		introspectionResponse = object.IntrospectionResponse{
+			Active:   true,
+			ClientId: clientId,
+			Exp:      jwtToken.ExpiresAt.Unix(),
+			Iat:      jwtToken.IssuedAt.Unix(),
+			Nbf:      jwtToken.NotBefore.Unix(),
+			Sub:      jwtToken.Subject,
+			Aud:      jwtToken.Audience,
+			Iss:      jwtToken.Issuer,
+			Jti:      jwtToken.ID,
+		}
+
+		if jwtToken.Scope != "" {
+			introspectionResponse.Scope = jwtToken.Scope
+		}
+		if jwtToken.Name != "" {
+			introspectionResponse.Username = jwtToken.Name
+		}
+		if jwtToken.TokenType != "" {
+			introspectionResponse.TokenType = jwtToken.TokenType
+		}
 	}
 
-	jwtToken, err := object.ParseJwtTokenByApplication(tokenValue, application)
-	if err != nil || jwtToken.Valid() != nil {
-		// and token revoked case. but we not implement
-		// TODO: 2022-03-03 add token revoked check, when we implemented the Token Revocation(rfc7009) Specs.
-		// refs: https://tools.ietf.org/html/rfc7009
-		c.Data["json"] = &object.IntrospectionResponse{Active: false}
-		c.ServeJSON()
-		return
+	if tokenTypeHint == "" {
+		token, err = object.GetTokenByTokenValue(tokenValue, introspectionResponse.TokenType)
+		if err != nil {
+			c.ResponseTokenError(err.Error())
+			return
+		}
+		if token == nil || token.ExpiresIn <= 0 {
+			respondWithInactiveToken()
+			return
+		}
 	}
 
-	c.Data["json"] = &object.IntrospectionResponse{
-		Active:    true,
-		Scope:     jwtToken.Scope,
-		ClientId:  clientId,
-		Username:  token.User,
-		TokenType: token.TokenType,
-		Exp:       jwtToken.ExpiresAt.Unix(),
-		Iat:       jwtToken.IssuedAt.Unix(),
-		Nbf:       jwtToken.NotBefore.Unix(),
-		Sub:       jwtToken.Subject,
-		Aud:       jwtToken.Audience,
-		Iss:       jwtToken.Issuer,
-		Jti:       jwtToken.ID,
+	if token != nil {
+		application, err = object.GetApplication(fmt.Sprintf("%s/%s", token.Owner, token.Application))
+		if err != nil {
+			c.ResponseTokenError(err.Error())
+			return
+		}
+		if application == nil {
+			c.ResponseError(fmt.Sprintf(c.T("auth:The application: %s does not exist"), token.Application))
+			return
+		}
+
+		introspectionResponse.TokenType = token.TokenType
+		introspectionResponse.ClientId = application.ClientId
 	}
+
+	c.Data["json"] = introspectionResponse
 	c.ServeJSON()
 }

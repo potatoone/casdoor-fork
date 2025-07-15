@@ -15,14 +15,19 @@
 package object
 
 import (
+	"crypto/md5"
+	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/util"
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/thanhpk/randstr"
+	"golang.org/x/text/encoding/unicode"
 )
 
 type LdapConn struct {
@@ -60,8 +65,11 @@ type LdapUser struct {
 
 func (ldap *Ldap) GetLdapConn() (c *LdapConn, err error) {
 	var conn *goldap.Conn
+	tlsConfig := tls.Config{
+		InsecureSkipVerify: ldap.AllowSelfSignedCert,
+	}
 	if ldap.EnableSsl {
-		conn, err = goldap.DialTLS("tcp", fmt.Sprintf("%s:%d", ldap.Host, ldap.Port), nil)
+		conn, err = goldap.DialTLS("tcp", fmt.Sprintf("%s:%d", ldap.Host, ldap.Port), &tlsConfig)
 	} else {
 		conn, err = goldap.Dial("tcp", fmt.Sprintf("%s:%d", ldap.Host, ldap.Port))
 	}
@@ -252,15 +260,15 @@ func AutoAdjustLdapUser(users []LdapUser) []LdapUser {
 	res := make([]LdapUser, len(users))
 	for i, user := range users {
 		res[i] = LdapUser{
-			UidNumber:         user.UidNumber,
-			Uid:               user.Uid,
-			Cn:                user.Cn,
-			GroupId:           user.GidNumber,
-			Uuid:              user.GetLdapUuid(),
-			DisplayName:       user.DisplayName,
-			Email:             util.ReturnAnyNotEmpty(user.Email, user.EmailAddress, user.Mail),
-			Mobile:            util.ReturnAnyNotEmpty(user.Mobile, user.MobileTelephoneNumber, user.TelephoneNumber),
-			RegisteredAddress: util.ReturnAnyNotEmpty(user.PostalAddress, user.RegisteredAddress),
+			UidNumber:   user.UidNumber,
+			Uid:         user.Uid,
+			Cn:          user.Cn,
+			GroupId:     user.GidNumber,
+			Uuid:        user.GetLdapUuid(),
+			DisplayName: user.DisplayName,
+			Email:       util.ReturnAnyNotEmpty(user.Email, user.EmailAddress, user.Mail),
+			Mobile:      util.ReturnAnyNotEmpty(user.Mobile, user.MobileTelephoneNumber, user.TelephoneNumber),
+			Address:     util.ReturnAnyNotEmpty(user.Address, user.PostalAddress, user.RegisteredAddress),
 		}
 	}
 	return res
@@ -343,7 +351,7 @@ func SyncLdapUsers(owner string, syncUsers []LdapUser, ldapId string) (existUser
 				newUser.Groups = []string{ldap.DefaultGroup}
 			}
 
-			affected, err := AddUser(newUser)
+			affected, err := AddUser(newUser, "en")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -369,6 +377,88 @@ func GetExistUuids(owner string, uuids []string) ([]string, error) {
 	}
 
 	return existUuids, nil
+}
+
+func ResetLdapPassword(user *User, oldPassword string, newPassword string, lang string) error {
+	ldaps, err := GetLdaps(user.Owner)
+	if err != nil {
+		return err
+	}
+
+	for _, ldapServer := range ldaps {
+		conn, err := ldapServer.GetLdapConn()
+		if err != nil {
+			continue
+		}
+
+		searchReq := goldap.NewSearchRequest(ldapServer.BaseDn, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
+			0, 0, false, ldapServer.buildAuthFilterString(user), []string{}, nil)
+
+		searchResult, err := conn.Conn.Search(searchReq)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+
+		if len(searchResult.Entries) == 0 {
+			conn.Close()
+			continue
+		}
+		if len(searchResult.Entries) > 1 {
+			conn.Close()
+			return fmt.Errorf(i18n.Translate(lang, "check:Multiple accounts with same uid, please check your ldap server"))
+		}
+
+		userDn := searchResult.Entries[0].DN
+
+		var pwdEncoded string
+		modifyPasswordRequest := goldap.NewModifyRequest(userDn, nil)
+		if conn.IsAD {
+			utf16 := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)
+			pwdEncoded, err := utf16.NewEncoder().String("\"" + newPassword + "\"")
+			if err != nil {
+				conn.Close()
+				return err
+			}
+			modifyPasswordRequest.Replace("unicodePwd", []string{pwdEncoded})
+			modifyPasswordRequest.Replace("userAccountControl", []string{"512"})
+		} else if oldPassword != "" {
+			modifyPasswordRequestWithOldPassword := goldap.NewPasswordModifyRequest(userDn, oldPassword, newPassword)
+			_, err = conn.Conn.PasswordModify(modifyPasswordRequestWithOldPassword)
+			if err != nil {
+				conn.Close()
+				return err
+			}
+			conn.Close()
+			return nil
+		} else {
+			switch ldapServer.PasswordType {
+			case "SSHA":
+				pwdEncoded, err = generateSSHA(newPassword)
+				break
+			case "MD5":
+				md5Byte := md5.Sum([]byte(newPassword))
+				md5Password := base64.StdEncoding.EncodeToString(md5Byte[:])
+				pwdEncoded = "{MD5}" + md5Password
+				break
+			case "Plain":
+				pwdEncoded = newPassword
+				break
+			default:
+				pwdEncoded = newPassword
+				break
+			}
+			modifyPasswordRequest.Replace("userPassword", []string{pwdEncoded})
+		}
+
+		err = conn.Conn.Modify(modifyPasswordRequest)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+		conn.Close()
+	}
+	return nil
 }
 
 func (ldapUser *LdapUser) buildLdapUserName(owner string) (string, error) {

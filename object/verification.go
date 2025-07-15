@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,6 +35,8 @@ type VerifyResult struct {
 	Msg  string
 }
 
+var ResetLinkReg *regexp.Regexp
+
 const (
 	VerificationSuccess = iota
 	wrongCodeError
@@ -44,6 +48,10 @@ const (
 	VerifyTypePhone = "phone"
 	VerifyTypeEmail = "email"
 )
+
+func init() {
+	ResetLinkReg = regexp.MustCompile("(?s)<reset-link>(.*?)</reset-link>")
+}
 
 type VerificationRecord struct {
 	Owner       string `xorm:"varchar(100) notnull pk" json:"owner"`
@@ -57,7 +65,7 @@ type VerificationRecord struct {
 	Receiver   string `xorm:"varchar(100) index notnull" json:"receiver"`
 	Code       string `xorm:"varchar(10) notnull" json:"code"`
 	Time       int64  `xorm:"notnull" json:"time"`
-	IsUsed     bool
+	IsUsed     bool   `xorm:"notnull" json:"isUsed"`
 }
 
 func IsAllowSend(user *User, remoteAddr, recordType string) error {
@@ -81,17 +89,34 @@ func IsAllowSend(user *User, remoteAddr, recordType string) error {
 	return nil
 }
 
-func SendVerificationCodeToEmail(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string) error {
+func SendVerificationCodeToEmail(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string, method string, host string, applicationName string) error {
 	sender := organization.DisplayName
 	title := provider.Title
 
 	code := getRandomCode(6)
-	if organization.MasterVerificationCode != "" {
-		code = organization.MasterVerificationCode
-	}
+	// if organization.MasterVerificationCode != "" {
+	//	code = organization.MasterVerificationCode
+	// }
 
 	// "You have requested a verification code at Casdoor. Here is your code: %s, please enter in 5 minutes."
 	content := strings.Replace(provider.Content, "%s", code, 1)
+
+	if method == "forget" {
+		originFrontend, _ := getOriginFromHost(host)
+
+		query := url.Values{}
+		query.Add("code", code)
+		query.Add("username", user.Name)
+		query.Add("dest", util.GetMaskedEmail(dest))
+		forgetURL := originFrontend + "/forget/" + applicationName + "?" + query.Encode()
+
+		content = strings.Replace(content, "%link", forgetURL, -1)
+		content = strings.Replace(content, "<reset-link>", "", -1)
+		content = strings.Replace(content, "</reset-link>", "", -1)
+	} else {
+		matchContent := ResetLinkReg.Find([]byte(content))
+		content = strings.Replace(content, string(matchContent), "", -1)
+	}
 
 	userString := "Hi"
 	if user != nil {
@@ -124,9 +149,9 @@ func SendVerificationCodeToPhone(organization *Organization, user *User, provide
 	}
 
 	code := getRandomCode(6)
-	if organization.MasterVerificationCode != "" {
-		code = organization.MasterVerificationCode
-	}
+	// if organization.MasterVerificationCode != "" {
+	//	code = organization.MasterVerificationCode
+	// }
 
 	err = SendSms(provider, code, dest)
 	if err != nil {

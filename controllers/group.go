@@ -15,6 +15,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/beego/beego/utils/pagination"
 	"github.com/casdoor/casdoor/object"
@@ -70,15 +71,33 @@ func (c *ApiController) GetGroups() {
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
-		} else {
-			err = object.ExtendGroupsWithUsers(groups)
-			if err != nil {
-				c.ResponseError(err.Error())
-				return
+		}
+		groupsHaveChildrenMap, err := object.GetGroupsHaveChildrenMap(groups)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		for _, group := range groups {
+			_, ok := groupsHaveChildrenMap[group.GetId()]
+			if ok {
+				group.HaveChildren = true
 			}
 
-			c.ResponseOk(groups, paginator.Nums())
+			parent, ok := groupsHaveChildrenMap[fmt.Sprintf("%s/%s", group.Owner, group.ParentId)]
+			if ok {
+				group.ParentName = parent.DisplayName
+			}
 		}
+
+		err = object.ExtendGroupsWithUsers(groups)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		c.ResponseOk(groups, paginator.Nums())
+
 	}
 }
 

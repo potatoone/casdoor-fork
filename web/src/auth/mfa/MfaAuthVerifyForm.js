@@ -31,9 +31,10 @@ export function MfaAuthVerifyForm({formValues, authParams, mfaProps, application
   const [mfaType, setMfaType] = useState(mfaProps.mfaType);
   const [recoveryCode, setRecoveryCode] = useState("");
 
-  const verify = ({passcode}) => {
+  const verify = ({passcode, enableMfaRemember}) => {
     setLoading(true);
-    const values = {...formValues, passcode, mfaType};
+    const values = {...formValues, passcode, enableMfaRemember};
+    values["mfaType"] = mfaProps.mfaType;
     const loginFunction = formValues.type === "cas" ? AuthBackend.loginCas : AuthBackend.login;
     loginFunction(values, authParams).then((res) => {
       if (res.status === "ok") {
@@ -71,7 +72,7 @@ export function MfaAuthVerifyForm({formValues, authParams, mfaProps, application
         <div style={{marginBottom: 24, textAlign: "center", fontSize: "24px"}}>
           {i18next.t("mfa:Multi-factor authentication")}
         </div>
-        {mfaType === SmsMfaType || mfaType === EmailMfaType ? (
+        {mfaProps.mfaType === SmsMfaType || mfaProps.mfaType === EmailMfaType ? (
           <Fragment>
             <div style={{marginBottom: 24}}>
               {i18next.t("mfa:You have enabled Multi-Factor Authentication, Please click 'Send Code' to continue")}

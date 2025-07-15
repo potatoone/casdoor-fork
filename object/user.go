@@ -15,13 +15,18 @@
 package object
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/faceId"
+	"github.com/casdoor/casdoor/i18n"
+	"github.com/casdoor/casdoor/proxy"
 	"github.com/casdoor/casdoor/util"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/xorm-io/builder"
@@ -48,7 +53,7 @@ func InitUserManager() {
 
 type User struct {
 	Owner       string `xorm:"varchar(100) notnull pk" json:"owner"`
-	Name        string `xorm:"varchar(100) notnull pk" json:"name"`
+	Name        string `xorm:"varchar(255) notnull pk" json:"name"`
 	CreatedTime string `xorm:"varchar(100) index" json:"createdTime"`
 	UpdatedTime string `xorm:"varchar(100)" json:"updatedTime"`
 	DeletedTime string `xorm:"varchar(100)" json:"deletedTime"`
@@ -129,6 +134,7 @@ type User struct {
 	Bilibili        string `xorm:"bilibili varchar(100)" json:"bilibili"`
 	Okta            string `xorm:"okta varchar(100)" json:"okta"`
 	Douyin          string `xorm:"douyin varchar(100)" json:"douyin"`
+	Kwai            string `xorm:"kwai varchar(100)" json:"kwai"`
 	Line            string `xorm:"line varchar(100)" json:"line"`
 	Amazon          string `xorm:"amazon varchar(100)" json:"amazon"`
 	Auth0           string `xorm:"auth0 varchar(100)" json:"auth0"`
@@ -204,10 +210,12 @@ type User struct {
 	LastSigninWrongTime    string `xorm:"varchar(100)" json:"lastSigninWrongTime"`
 	SigninWrongTimes       int    `json:"signinWrongTimes"`
 
-	ManagedAccounts    []ManagedAccount `xorm:"managedAccounts blob" json:"managedAccounts"`
-	MfaAccounts        []MfaAccount     `xorm:"mfaAccounts blob" json:"mfaAccounts"`
-	NeedUpdatePassword bool             `json:"needUpdatePassword"`
-	IpWhitelist        string           `xorm:"varchar(200)" json:"ipWhitelist"`
+	ManagedAccounts     []ManagedAccount `xorm:"managedAccounts blob" json:"managedAccounts"`
+	MfaAccounts         []MfaAccount     `xorm:"mfaAccounts blob" json:"mfaAccounts"`
+	MfaItems            []*MfaItem       `xorm:"varchar(300)" json:"mfaItems"`
+	MfaRememberDeadline string           `xorm:"varchar(100)" json:"mfaRememberDeadline"`
+	NeedUpdatePassword  bool             `json:"needUpdatePassword"`
+	IpWhitelist         string           `xorm:"varchar(200)" json:"ipWhitelist"`
 }
 
 type Userinfo struct {
@@ -237,11 +245,13 @@ type MfaAccount struct {
 	AccountName string `xorm:"varchar(100)" json:"accountName"`
 	Issuer      string `xorm:"varchar(100)" json:"issuer"`
 	SecretKey   string `xorm:"varchar(100)" json:"secretKey"`
+	Origin      string `xorm:"varchar(100)" json:"origin"`
 }
 
 type FaceId struct {
 	Name       string    `xorm:"varchar(100) notnull pk" json:"name"`
 	FaceIdData []float64 `json:"faceIdData"`
+	ImageUrl   string    `json:"ImageUrl"`
 }
 
 func GetUserFieldStringValue(user *User, fieldName string) (bool, string, error) {
@@ -452,6 +462,31 @@ func GetUserByEmail(owner string, email string) (*User, error) {
 	}
 }
 
+func GetUserByWebauthID(webauthId string) (*User, error) {
+	user := User{}
+	existed := false
+	var err error
+
+	if ormer.driverName == "postgres" {
+		existed, err = ormer.Engine.Where(builder.Like{"\"webauthnCredentials\"", webauthId}).Get(&user)
+	} else if ormer.driverName == "mssql" {
+		existed, err = ormer.Engine.Where("CAST(webauthnCredentials AS VARCHAR(MAX)) like ?", "%"+webauthId+"%").Get(&user)
+	} else if ormer.driverName == "sqlite" {
+		existed, err = ormer.Engine.Where("CAST(webauthnCredentials AS text) like ?", "%"+webauthId+"%").Get(&user)
+	} else {
+		existed, err = ormer.Engine.Where("webauthnCredentials like ?", "%"+webauthId+"%").Get(&user)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if !existed {
+		return nil, fmt.Errorf("user not exist")
+	}
+
+	return &user, err
+}
+
 func GetUserByEmailOnly(email string) (*User, error) {
 	if email == "" {
 		return nil, nil
@@ -628,6 +663,62 @@ func GetMaskedUser(user *User, isAdminOrSelf bool, errs ...error) (*User, error)
 	return user, nil
 }
 
+func GetFilteredUser(user *User, isAdmin bool, isAdminOrSelf bool, accountItems []*AccountItem) (*User, error) {
+	if accountItems == nil || len(accountItems) == 0 {
+		return user, nil
+	}
+
+	userFieldMap := map[string]int{}
+
+	reflectedUserField := reflect.TypeOf(User{})
+	for i := 0; i < reflectedUserField.NumField(); i++ {
+		userFieldMap[strings.ToLower(reflectedUserField.Field(i).Name)] = i
+	}
+
+	reflectedUser := reflect.ValueOf(user).Elem()
+
+	for _, accountItem := range accountItems {
+		if accountItem.ViewRule == "Public" {
+			continue
+		} else if accountItem.ViewRule == "Self" && isAdminOrSelf {
+			continue
+		} else if accountItem.ViewRule == "Admin" && isAdmin {
+			continue
+		}
+
+		lowerCaseAccountItemName := strings.ToLower(accountItem.Name)
+		lowerCaseAccountItemName = strings.ReplaceAll(lowerCaseAccountItemName, " ", "")
+
+		switch accountItem.Name {
+		case "Multi-factor authentication":
+			lowerCaseAccountItemName = strings.ToLower("PreferredMfaType")
+		case "User type":
+			lowerCaseAccountItemName = "type"
+		case "Country/Region":
+			lowerCaseAccountItemName = "region"
+		case "ID card info":
+			{
+				infoKeys := []string{"idCardWithPerson", "idCardFront", "idCardWithPerson"}
+				for _, infoKey := range infoKeys {
+					if _, ok := user.Properties[infoKey]; ok {
+						user.Properties[infoKey] = ""
+					}
+				}
+				continue
+			}
+		}
+
+		fieldIdx, ok := userFieldMap[lowerCaseAccountItemName]
+		if !ok {
+			continue
+		}
+
+		reflectedUser.Field(fieldIdx).SetZero()
+	}
+
+	return user, nil
+}
+
 func GetMaskedUsers(users []*User, errs ...error) ([]*User, error) {
 	if len(errs) > 0 && errs[0] != nil {
 		return nil, errs[0]
@@ -679,6 +770,10 @@ func UpdateUser(id string, user *User, columns []string, isAdmin bool) (bool, er
 		user.Password = oldUser.Password
 	}
 
+	if user.Id != oldUser.Id && user.Id == "" {
+		user.Id = oldUser.Id
+	}
+
 	if user.Avatar != oldUser.Avatar && user.Avatar != "" && user.PermanentAvatar != "*" {
 		user.PermanentAvatar, err = getPermanentAvatarUrl(user.Owner, user.Name, user.Avatar, false)
 		if err != nil {
@@ -693,16 +788,16 @@ func UpdateUser(id string, user *User, columns []string, isAdmin bool) (bool, er
 			"is_admin", "is_forbidden", "is_deleted", "hash", "is_default_avatar", "properties", "webauthnCredentials", "managedAccounts", "face_ids", "mfaAccounts",
 			"signin_wrong_times", "last_change_password_time", "last_signin_wrong_time", "groups", "access_key", "access_secret", "mfa_phone_enabled", "mfa_email_enabled",
 			"github", "google", "qq", "wechat", "facebook", "dingtalk", "weibo", "gitee", "linkedin", "wecom", "lark", "gitlab", "adfs",
-			"baidu", "alipay", "casdoor", "infoflow", "apple", "azuread", "azureadb2c", "slack", "steam", "bilibili", "okta", "douyin", "line", "amazon",
+			"baidu", "alipay", "casdoor", "infoflow", "apple", "azuread", "azureadb2c", "slack", "steam", "bilibili", "okta", "douyin", "kwai", "line", "amazon",
 			"auth0", "battlenet", "bitbucket", "box", "cloudfoundry", "dailymotion", "deezer", "digitalocean", "discord", "dropbox",
 			"eveonline", "fitbit", "gitea", "heroku", "influxcloud", "instagram", "intercom", "kakao", "lastfm", "mailru", "meetup",
 			"microsoftonline", "naver", "nextcloud", "onedrive", "oura", "patreon", "paypal", "salesforce", "shopify", "soundcloud",
 			"spotify", "strava", "stripe", "type", "tiktok", "tumblr", "twitch", "twitter", "typetalk", "uber", "vk", "wepay", "xero", "yahoo",
-			"yammer", "yandex", "zoom", "custom", "need_update_password", "ip_whitelist",
+			"yammer", "yandex", "zoom", "custom", "need_update_password", "ip_whitelist", "mfa_items", "mfa_remember_deadline",
 		}
 	}
 	if isAdmin {
-		columns = append(columns, "name", "id", "email", "phone", "country_code", "type", "balance")
+		columns = append(columns, "name", "id", "email", "phone", "country_code", "type", "balance", "mfa_items")
 	}
 
 	columns = append(columns, "updated_time")
@@ -782,7 +877,7 @@ func UpdateUserForAllFields(id string, user *User) (bool, error) {
 	return affected != 0, nil
 }
 
-func AddUser(user *User) (bool, error) {
+func AddUser(user *User, lang string) (bool, error) {
 	if user.Id == "" {
 		application, err := GetApplicationByUser(user)
 		if err != nil {
@@ -798,7 +893,11 @@ func AddUser(user *User) (bool, error) {
 	}
 
 	if user.Owner == "" || user.Name == "" {
-		return false, fmt.Errorf("the user's owner and name should not be empty")
+		return false, fmt.Errorf(i18n.Translate(lang, "user:the user's owner and name should not be empty"))
+	}
+
+	if CheckUsernameWithEmail(user.Name, "en") != "" {
+		user.Name = util.GetRandomName()
 	}
 
 	organization, err := GetOrganizationByUser(user)
@@ -806,7 +905,21 @@ func AddUser(user *User) (bool, error) {
 		return false, err
 	}
 	if organization == nil {
-		return false, fmt.Errorf("the organization: %s is not found", user.Owner)
+		return false, fmt.Errorf(i18n.Translate(lang, "auth:the organization: %s is not found"), user.Owner)
+	}
+
+	if user.Owner != "built-in" {
+		applicationCount, err := GetOrganizationApplicationCount(organization.Owner, organization.Name, "", "")
+		if err != nil {
+			return false, err
+		}
+		if applicationCount == 0 {
+			return false, fmt.Errorf(i18n.Translate(lang, "general:The organization: %s should have one application at least"), organization.Owner)
+		}
+	}
+
+	if organization.Name == "built-in" && !organization.HasPrivilegeConsent && user.Name != "admin" {
+		return false, fmt.Errorf(i18n.Translate(lang, "organization:adding a new user to the 'built-in' organization is currently disabled. Please note: all users in the 'built-in' organization are global administrators in Casdoor. Refer to the docs: https://casdoor.org/docs/basic/core-concepts#how-does-casdoor-manage-itself. If you still wish to create a user for the 'built-in' organization, go to the organization's settings page and enable the 'Has privilege consent' option."))
 	}
 
 	if organization.DefaultPassword != "" && user.Password == "123" {
@@ -840,11 +953,14 @@ func AddUser(user *User) (bool, error) {
 		}
 	}
 
-	count, err := GetUserCount(user.Owner, "", "", "")
-	if err != nil {
-		return false, err
+	rankingItem := GetAccountItemByName("Ranking", organization)
+	if rankingItem != nil {
+		count, err := GetUserCount(user.Owner, "", "", "")
+		if err != nil {
+			return false, err
+		}
+		user.Ranking = int(count + 1)
 	}
-	user.Ranking = int(count + 1)
 
 	if user.Groups != nil && len(user.Groups) > 0 {
 		_, err = userEnforcer.UpdateGroupsForUser(user.GetId(), user.Groups)
@@ -952,6 +1068,11 @@ func deleteUser(user *User) (bool, error) {
 func DeleteUser(user *User) (bool, error) {
 	// Forced offline the user first
 	_, err := DeleteSession(util.GetSessionId(user.Owner, user.Name, CasdoorApplication))
+	if err != nil {
+		return false, err
+	}
+
+	_, err = userEnforcer.DeleteGroupsForUser(user.GetId())
 	if err != nil {
 		return false, err
 	}
@@ -1067,6 +1188,17 @@ func ExtendUserWithRolesAndPermissions(user *User) (err error) {
 }
 
 func DeleteGroupForUser(user string, group string) (bool, error) {
+	userObj, err := GetUser(user)
+	if err != nil {
+		return false, err
+	}
+
+	userObj.Groups = util.DeleteVal(userObj.Groups, group)
+	_, err = updateUser(user, userObj, []string{"groups"})
+	if err != nil {
+		return false, err
+	}
+
 	return userEnforcer.DeleteGroupForUser(user, group)
 }
 
@@ -1171,6 +1303,40 @@ func (user *User) IsGlobalAdmin() bool {
 	}
 
 	return user.Owner == "built-in"
+}
+
+func (user *User) CheckUserFace(faceIdImage []string, provider *Provider) (bool, error) {
+	faceIdChecker := faceId.GetFaceIdProvider(provider.Type, provider.ClientId, provider.ClientSecret, provider.Endpoint)
+	httpClient := proxy.DefaultHttpClient
+	errList := []error{}
+	for _, userFaceId := range user.FaceIds {
+		if userFaceId.ImageUrl != "" {
+			imgResp, err := httpClient.Get(userFaceId.ImageUrl)
+			if err != nil {
+				continue
+			}
+			imgByte, err := io.ReadAll(imgResp.Body)
+			if err != nil {
+				continue
+			}
+
+			base64Img := base64.StdEncoding.EncodeToString(imgByte)
+			for _, imgBase64 := range faceIdImage {
+				isSuccess, err := faceIdChecker.Check(imgBase64, base64Img)
+				if err != nil {
+					errList = append(errList, err)
+					continue
+				}
+				if isSuccess {
+					return true, nil
+				}
+			}
+		}
+	}
+	if len(errList) > 0 {
+		return false, errList[0]
+	}
+	return false, nil
 }
 
 func GenerateIdForNewUser(application *Application) (string, error) {

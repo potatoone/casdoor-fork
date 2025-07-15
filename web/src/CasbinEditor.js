@@ -13,14 +13,11 @@
 // limitations under the License.
 
 import React, {useCallback, useEffect, useRef, useState} from "react";
-import {Controlled as CodeMirror} from "react-codemirror2";
-import "codemirror/lib/codemirror.css";
-import "codemirror/mode/properties/properties";
 import * as Setting from "./Setting";
 import IframeEditor from "./IframeEditor";
 import {Tabs} from "antd";
-
-const {TabPane} = Tabs;
+import i18next from "i18next";
+import Editor from "./common/Editor";
 
 const CasbinEditor = ({model, onModelTextChange}) => {
   const [activeKey, setActiveKey] = useState("advanced");
@@ -67,10 +64,15 @@ const CasbinEditor = ({model, onModelTextChange}) => {
 
   return (
     <div style={{height: "100%", width: "100%", display: "flex", flexDirection: "column"}}>
-      <Tabs activeKey={activeKey} onChange={handleTabChange} style={{flex: "0 0 auto", marginTop: "-10px"}}>
-        <TabPane tab="Basic Editor" key="basic" />
-        <TabPane tab="Advanced Editor" key="advanced" />
-      </Tabs>
+      <Tabs
+        activeKey={activeKey}
+        onChange={handleTabChange}
+        style={{flex: "0 0 auto", marginTop: "-10px"}}
+        items={[
+          {key: "basic", label: i18next.t("model:Basic Editor")},
+          {key: "advanced", label: i18next.t("model:Advanced Editor")},
+        ]}
+      />
       <div style={{flex: "1 1 auto", overflow: "hidden"}}>
         {activeKey === "advanced" ? (
           <IframeEditor
@@ -80,11 +82,10 @@ const CasbinEditor = ({model, onModelTextChange}) => {
             style={{width: "100%", height: "100%"}}
           />
         ) : (
-          <CodeMirror
+          <Editor
             value={localModelText}
-            className="full-height-editor no-horizontal-scroll-editor"
-            options={{mode: "properties", theme: "default"}}
-            onBeforeChange={(editor, data, value) => {
+            readOnly={Setting.builtInObject(model)}
+            onChange={value => {
               handleModelTextChange(value);
             }}
           />

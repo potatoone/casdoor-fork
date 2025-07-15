@@ -93,7 +93,7 @@ func (c *ApiController) SendEmail() {
 
 	// when receiver is the reserved keyword: "TestSmtpServer", it means to test the SMTP server instead of sending a real Email
 	if len(emailForm.Receivers) == 1 && emailForm.Receivers[0] == "TestSmtpServer" {
-		err = object.DailSmtpServer(provider)
+		err = object.TestSmtpServer(provider)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -139,6 +139,9 @@ func (c *ApiController) SendEmail() {
 		}
 	}
 	content = strings.Replace(content, "%{user.friendlyName}", userString, 1)
+
+	matchContent := object.ResetLinkReg.Find([]byte(content))
+	content = strings.Replace(content, string(matchContent), "", -1)
 
 	for _, receiver := range emailForm.Receivers {
 		err = object.SendEmail(provider, emailForm.Title, content, receiver, emailForm.Sender)

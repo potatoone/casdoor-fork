@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/casdoor/casdoor/i18n"
@@ -36,6 +37,8 @@ const (
 	InvalidScope         = "invalid_scope"
 	EndpointError        = "endpoint_error"
 )
+
+var DeviceAuthMap = sync.Map{}
 
 type Code struct {
 	Message string `xorm:"varchar(100)" json:"message"`
@@ -69,6 +72,22 @@ type IntrospectionResponse struct {
 	Aud       []string `json:"aud,omitempty"`
 	Iss       string   `json:"iss,omitempty"`
 	Jti       string   `json:"jti,omitempty"`
+}
+
+type DeviceAuthCache struct {
+	UserSignIn    bool
+	UserName      string
+	ApplicationId string
+	Scope         string
+	RequestAt     time.Time
+}
+
+type DeviceAuthResponse struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationUri string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
 }
 
 func ExpireTokenByAccessToken(accessToken string) (bool, *Application, *Token, error) {
@@ -117,7 +136,7 @@ func CheckOAuthLogin(clientId string, responseType string, redirectUri string, s
 	return "", application, nil
 }
 
-func GetOAuthCode(userId string, clientId string, responseType string, redirectUri string, scope string, state string, nonce string, challenge string, host string, lang string) (*Code, error) {
+func GetOAuthCode(userId string, clientId string, provider string, responseType string, redirectUri string, scope string, state string, nonce string, challenge string, host string, lang string) (*Code, error) {
 	user, err := GetUser(userId)
 	if err != nil {
 		return nil, err
@@ -152,7 +171,7 @@ func GetOAuthCode(userId string, clientId string, responseType string, redirectU
 	if err != nil {
 		return nil, err
 	}
-	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, nonce, scope, host)
+	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, provider, nonce, scope, host)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +241,8 @@ func GetOAuthToken(grantType string, clientId string, clientSecret string, code 
 		token, tokenError, err = GetClientCredentialsToken(application, clientSecret, scope, host)
 	case "token", "id_token": // Implicit Grant
 		token, tokenError, err = GetImplicitToken(application, username, scope, nonce, host)
+	case "urn:ietf:params:oauth:grant-type:device_code":
+		token, tokenError, err = GetImplicitToken(application, username, scope, nonce, host)
 	case "refresh_token":
 		refreshToken2, err := RefreshToken(grantType, refreshToken, scope, clientId, clientSecret, host)
 		if err != nil {
@@ -248,7 +269,10 @@ func GetOAuthToken(grantType string, clientId string, clientSecret string, code 
 
 	token.CodeIsUsed = true
 
-	go updateUsedByCode(token)
+	_, err = updateUsedByCode(token)
+	if err != nil {
+		return nil, err
+	}
 
 	tokenWrapper := &TokenWrapper{
 		AccessToken:  token.AccessToken,
@@ -309,22 +333,29 @@ func RefreshToken(grantType string, refreshToken string, scope string, clientId 
 		}, nil
 	}
 
+	var oldTokenScope string
 	if application.TokenFormat == "JWT-Standard" {
-		_, err = ParseStandardJwtToken(refreshToken, cert)
+		oldToken, err := ParseStandardJwtToken(refreshToken, cert)
 		if err != nil {
 			return &TokenError{
 				Error:            InvalidGrant,
 				ErrorDescription: fmt.Sprintf("parse refresh token error: %s", err.Error()),
 			}, nil
 		}
+		oldTokenScope = oldToken.Scope
 	} else {
-		_, err = ParseJwtToken(refreshToken, cert)
+		oldToken, err := ParseJwtToken(refreshToken, cert)
 		if err != nil {
 			return &TokenError{
 				Error:            InvalidGrant,
 				ErrorDescription: fmt.Sprintf("parse refresh token error: %s", err.Error()),
 			}, nil
 		}
+		oldTokenScope = oldToken.Scope
+	}
+
+	if scope == "" {
+		scope = oldTokenScope
 	}
 
 	// generate a new token
@@ -348,7 +379,7 @@ func RefreshToken(grantType string, refreshToken string, scope string, clientId 
 		return nil, err
 	}
 
-	newAccessToken, newRefreshToken, tokenName, err := generateJwtToken(application, user, "", scope, host)
+	newAccessToken, newRefreshToken, tokenName, err := generateJwtToken(application, user, "", "", scope, host)
 	if err != nil {
 		return &TokenError{
 			Error:            EndpointError,
@@ -504,7 +535,7 @@ func GetPasswordToken(application *Application, username string, password string
 	}
 
 	if user.Ldap != "" {
-		err = checkLdapUserPassword(user, password, "en")
+		err = CheckLdapUserPassword(user, password, "en")
 	} else {
 		err = CheckPassword(user, password, "en")
 	}
@@ -527,7 +558,7 @@ func GetPasswordToken(application *Application, username string, password string
 		return nil, nil, err
 	}
 
-	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, "", scope, host)
+	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, "", "", scope, host)
 	if err != nil {
 		return nil, &TokenError{
 			Error:            EndpointError,
@@ -573,7 +604,7 @@ func GetClientCredentialsToken(application *Application, clientSecret string, sc
 		Type:  "application",
 	}
 
-	accessToken, _, tokenName, err := generateJwtToken(application, nullUser, "", scope, host)
+	accessToken, _, tokenName, err := generateJwtToken(application, nullUser, "", "", scope, host)
 	if err != nil {
 		return nil, &TokenError{
 			Error:            EndpointError,
@@ -637,7 +668,7 @@ func GetTokenByUser(application *Application, user *User, scope string, nonce st
 		return nil, err
 	}
 
-	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, nonce, scope, host)
+	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, "", nonce, scope, host)
 	if err != nil {
 		return nil, err
 	}
@@ -733,7 +764,7 @@ func GetWechatMiniProgramToken(application *Application, code string, host strin
 				UserPropertiesWechatUnionId: unionId,
 			},
 		}
-		_, err = AddUser(user)
+		_, err = AddUser(user, "en")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -744,7 +775,7 @@ func GetWechatMiniProgramToken(application *Application, code string, host strin
 		return nil, nil, err
 	}
 
-	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, "", "", host)
+	accessToken, refreshToken, tokenName, err := generateJwtToken(application, user, "", "", "", host)
 	if err != nil {
 		return nil, &TokenError{
 			Error:            EndpointError,

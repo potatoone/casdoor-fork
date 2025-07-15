@@ -34,16 +34,18 @@ type AuthForm struct {
 	Phone          string `json:"phone"`
 	Affiliation    string `json:"affiliation"`
 	IdCard         string `json:"idCard"`
+	Language       string `json:"language"`
 	Region         string `json:"region"`
 	InvitationCode string `json:"invitationCode"`
 
-	Application string `json:"application"`
-	ClientId    string `json:"clientId"`
-	Provider    string `json:"provider"`
-	Code        string `json:"code"`
-	State       string `json:"state"`
-	RedirectUri string `json:"redirectUri"`
-	Method      string `json:"method"`
+	Application  string `json:"application"`
+	ClientId     string `json:"clientId"`
+	Provider     string `json:"provider"`
+	ProviderBack string `json:"providerBack"`
+	Code         string `json:"code"`
+	State        string `json:"state"`
+	RedirectUri  string `json:"redirectUri"`
+	Method       string `json:"method"`
 
 	EmailCode   string `json:"emailCode"`
 	PhoneCode   string `json:"phoneCode"`
@@ -59,14 +61,17 @@ type AuthForm struct {
 	CaptchaToken string `json:"captchaToken"`
 	ClientSecret string `json:"clientSecret"`
 
-	MfaType      string `json:"mfaType"`
-	Passcode     string `json:"passcode"`
-	RecoveryCode string `json:"recoveryCode"`
+	MfaType           string `json:"mfaType"`
+	Passcode          string `json:"passcode"`
+	RecoveryCode      string `json:"recoveryCode"`
+	EnableMfaRemember bool   `json:"enableMfaRemember"`
 
 	Plan    string `json:"plan"`
 	Pricing string `json:"pricing"`
 
-	FaceId []float64 `json:"faceId"`
+	FaceId      []float64 `json:"faceId"`
+	FaceIdImage []string  `json:"faceIdImage"`
+	UserCode    string    `json:"userCode"`
 }
 
 func GetAuthFormFieldValue(form *AuthForm, fieldName string) (bool, string) {

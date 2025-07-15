@@ -15,12 +15,75 @@
 package controllers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 )
+
+type CLIVersionInfo struct {
+	Version    string
+	BinaryPath string
+	BinaryTime time.Time
+}
+
+var (
+	cliVersionCache = make(map[string]*CLIVersionInfo)
+	cliVersionMutex sync.RWMutex
+)
+
+// getCLIVersion
+// @Title getCLIVersion
+// @Description Get CLI version with cache mechanism
+// @Param language string The language of CLI (go/java/rust etc.)
+// @Return string The version string of CLI
+// @Return error Error if CLI execution fails
+func getCLIVersion(language string) (string, error) {
+	binaryName := fmt.Sprintf("casbin-%s-cli", language)
+
+	binaryPath, err := exec.LookPath(binaryName)
+	if err != nil {
+		return "", fmt.Errorf("executable file not found: %v", err)
+	}
+
+	fileInfo, err := os.Stat(binaryPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get binary info: %v", err)
+	}
+
+	cliVersionMutex.RLock()
+	if info, exists := cliVersionCache[language]; exists {
+		if info.BinaryPath == binaryPath && info.BinaryTime == fileInfo.ModTime() {
+			cliVersionMutex.RUnlock()
+			return info.Version, nil
+		}
+	}
+	cliVersionMutex.RUnlock()
+
+	cmd := exec.Command(binaryName, "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get CLI version: %v", err)
+	}
+
+	version := strings.TrimSpace(string(output))
+
+	cliVersionMutex.Lock()
+	cliVersionCache[language] = &CLIVersionInfo{
+		Version:    version,
+		BinaryPath: binaryPath,
+		BinaryTime: fileInfo.ModTime(),
+	}
+	cliVersionMutex.Unlock()
+
+	return version, nil
+}
 
 func processArgsToTempFiles(args []string) ([]string, []string, error) {
 	tempFiles := []string{}
@@ -57,6 +120,11 @@ func processArgsToTempFiles(args []string) ([]string, []string, error) {
 // @Success 200 {object} controllers.Response The Response object
 // @router /run-casbin-command [get]
 func (c *ApiController) RunCasbinCommand() {
+	if err := validateIdentifier(c); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	language := c.Input().Get("language")
 	argString := c.Input().Get("args")
 
@@ -81,6 +149,16 @@ func (c *ApiController) RunCasbinCommand() {
 	err = json.Unmarshal([]byte(argString), &args)
 	if err != nil {
 		c.ResponseError(err.Error())
+		return
+	}
+
+	if len(args) > 0 && args[0] == "--version" {
+		version, err := getCLIVersion(language)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		c.ResponseOk(version)
 		return
 	}
 
@@ -111,4 +189,59 @@ func (c *ApiController) RunCasbinCommand() {
 	output := string(outputBytes)
 	output = strings.TrimSuffix(output, "\n")
 	c.ResponseOk(output)
+}
+
+// validateIdentifier
+// @Title validateIdentifier
+// @Description Validate the request hash and timestamp
+// @Param hash string The SHA-256 hash string
+// @Return error Returns error if validation fails, nil if successful
+func validateIdentifier(c *ApiController) error {
+	language := c.Input().Get("language")
+	args := c.Input().Get("args")
+	hash := c.Input().Get("m")
+	timestamp := c.Input().Get("t")
+
+	if hash == "" || timestamp == "" || language == "" || args == "" {
+		return fmt.Errorf("invalid identifier")
+	}
+
+	requestTime, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return fmt.Errorf("invalid identifier")
+	}
+	timeDiff := time.Since(requestTime)
+	if timeDiff > 5*time.Minute || timeDiff < -5*time.Minute {
+		return fmt.Errorf("invalid identifier")
+	}
+
+	params := map[string]string{
+		"language": language,
+		"args":     args,
+	}
+
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var paramParts []string
+	for _, k := range keys {
+		paramParts = append(paramParts, fmt.Sprintf("%s=%s", k, params[k]))
+	}
+	paramString := strings.Join(paramParts, "&")
+
+	version := "casbin-editor-v1"
+	rawString := fmt.Sprintf("%s|%s|%s", version, timestamp, paramString)
+
+	hasher := sha256.New()
+	hasher.Write([]byte(rawString))
+
+	calculatedHash := strings.ToLower(hex.EncodeToString(hasher.Sum(nil)))
+	if calculatedHash != strings.ToLower(hash) {
+		return fmt.Errorf("invalid identifier")
+	}
+
+	return nil
 }

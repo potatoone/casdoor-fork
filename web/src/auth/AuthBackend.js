@@ -37,7 +37,7 @@ export function signup(values) {
 }
 
 export function getEmailAndPhone(organization, username) {
-  return fetch(`${authConfig.serverUrl}/api/get-email-and-phone?organization=${organization}&username=${username}`, {
+  return fetch(`${authConfig.serverUrl}/api/get-email-and-phone?organization=${organization}&username=${encodeURIComponent(username)}`, {
     method: "GET",
     credentials: "include",
     headers: {
@@ -61,7 +61,14 @@ export function oAuthParamsToQuery(oAuthParams) {
 }
 
 export function getApplicationLogin(params) {
-  const queryParams = (params?.type === "cas") ? casLoginParamsToQuery(params) : oAuthParamsToQuery(params);
+  let queryParams = "";
+  if (params?.type === "cas") {
+    queryParams = casLoginParamsToQuery(params);
+  } else if (params?.type === "device") {
+    queryParams = `?userCode=${params.userCode}&type=device`;
+  } else {
+    queryParams = oAuthParamsToQuery(params);
+  }
   return fetch(`${authConfig.serverUrl}/api/get-app-login${queryParams}`, {
     method: "GET",
     credentials: "include",
@@ -156,7 +163,7 @@ export function getWechatQRCode(providerId) {
 }
 
 export function getCaptchaStatus(values) {
-  return fetch(`${Setting.ServerUrl}/api/get-captcha-status?organization=${values["organization"]}&userId=${values["username"]}`, {
+  return fetch(`${Setting.ServerUrl}/api/get-captcha-status?organization=${values["organization"]}&userId=${values["username"]}&application=${values["application"]}`, {
     method: "GET",
     credentials: "include",
     headers: {

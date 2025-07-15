@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/casdoor/casdoor/util"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type Claims struct {
@@ -30,6 +30,9 @@ type Claims struct {
 	Nonce     string `json:"nonce,omitempty"`
 	Tag       string `json:"tag"`
 	Scope     string `json:"scope,omitempty"`
+	// the `azp` (Authorized Party) claim. Optional. See https://openid.net/specs/openid-connect-core-1_0.html#IDToken
+	Azp      string `json:"azp,omitempty"`
+	Provider string `json:"provider,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -42,6 +45,17 @@ type UserShort struct {
 	Avatar      string `xorm:"varchar(500)" json:"avatar"`
 	Email       string `xorm:"varchar(100) index" json:"email"`
 	Phone       string `xorm:"varchar(100) index" json:"phone"`
+}
+
+type UserStandard struct {
+	Owner string `xorm:"varchar(100) notnull pk" json:"owner"`
+	Name  string `xorm:"varchar(100) notnull pk" json:"preferred_username,omitempty"`
+
+	Id          string `xorm:"varchar(100) index" json:"id"`
+	DisplayName string `xorm:"varchar(100)" json:"name,omitempty"`
+	Avatar      string `xorm:"varchar(500)" json:"picture,omitempty"`
+	Email       string `xorm:"varchar(100) index" json:"email,omitempty"`
+	Phone       string `xorm:"varchar(100) index" json:"phone,omitempty"`
 }
 
 type UserWithoutThirdIdp struct {
@@ -137,6 +151,8 @@ type ClaimsShort struct {
 	TokenType string `json:"tokenType,omitempty"`
 	Nonce     string `json:"nonce,omitempty"`
 	Scope     string `json:"scope,omitempty"`
+	Azp       string `json:"azp,omitempty"`
+	Provider  string `json:"provider,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -155,11 +171,27 @@ type ClaimsWithoutThirdIdp struct {
 	Nonce     string `json:"nonce,omitempty"`
 	Tag       string `json:"tag"`
 	Scope     string `json:"scope,omitempty"`
+	Azp       string `json:"azp,omitempty"`
+	Provider  string `json:"provider,omitempty"`
 	jwt.RegisteredClaims
 }
 
 func getShortUser(user *User) *UserShort {
 	res := &UserShort{
+		Owner: user.Owner,
+		Name:  user.Name,
+
+		Id:          user.Id,
+		DisplayName: user.DisplayName,
+		Avatar:      user.Avatar,
+		Email:       user.Email,
+		Phone:       user.Phone,
+	}
+	return res
+}
+
+func getStandardUser(user *User) *UserStandard {
+	res := &UserStandard{
 		Owner: user.Owner,
 		Name:  user.Name,
 
@@ -269,6 +301,8 @@ func getShortClaims(claims Claims) ClaimsShort {
 		Nonce:            claims.Nonce,
 		Scope:            claims.Scope,
 		RegisteredClaims: claims.RegisteredClaims,
+		Azp:              claims.Azp,
+		Provider:         claims.Provider,
 	}
 	return res
 }
@@ -281,6 +315,8 @@ func getClaimsWithoutThirdIdp(claims Claims) ClaimsWithoutThirdIdp {
 		Tag:                 claims.Tag,
 		Scope:               claims.Scope,
 		RegisteredClaims:    claims.RegisteredClaims,
+		Azp:                 claims.Azp,
+		Provider:            claims.Provider,
 	}
 	return res
 }
@@ -301,6 +337,8 @@ func getClaimsCustom(claims Claims, tokenField []string) jwt.MapClaims {
 	res["nonce"] = claims.Nonce
 	res["tag"] = claims.Tag
 	res["scope"] = claims.Scope
+	res["azp"] = claims.Azp
+	res["provider"] = claims.Provider
 
 	for _, field := range tokenField {
 		userField := userValue.FieldByName(field)
@@ -335,7 +373,7 @@ func refineUser(user *User) *User {
 	return user
 }
 
-func generateJwtToken(application *Application, user *User, nonce string, scope string, host string) (string, string, string, error) {
+func generateJwtToken(application *Application, user *User, provider string, nonce string, scope string, host string) (string, string, string, error) {
 	nowTime := time.Now()
 	expireTime := nowTime.Add(time.Duration(application.ExpireInHours) * time.Hour)
 	refreshExpireTime := nowTime.Add(time.Duration(application.RefreshExpireInHours) * time.Hour)
@@ -355,8 +393,10 @@ func generateJwtToken(application *Application, user *User, nonce string, scope 
 		TokenType: "access-token",
 		Nonce:     nonce,
 		// FIXME: A workaround for custom claim by reusing `tag` in user info
-		Tag:   user.Tag,
-		Scope: scope,
+		Tag:      user.Tag,
+		Scope:    scope,
+		Azp:      application.ClientId,
+		Provider: provider,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    originBackend,
 			Subject:   user.Id,

@@ -16,6 +16,7 @@ package object
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/beego/beego/context"
@@ -47,6 +48,7 @@ type Provider struct {
 	CustomLogo        string            `xorm:"varchar(200)" json:"customLogo"`
 	Scopes            string            `xorm:"varchar(100)" json:"scopes"`
 	UserMapping       map[string]string `xorm:"varchar(500)" json:"userMapping"`
+	HttpHeaders       map[string]string `xorm:"varchar(500)" json:"httpHeaders"`
 
 	Host       string `xorm:"varchar(100)" json:"host"`
 	Port       int    `json:"port"`
@@ -70,6 +72,7 @@ type Provider struct {
 	IdP                    string `xorm:"mediumtext" json:"idP"`
 	IssuerUrl              string `xorm:"varchar(100)" json:"issuerUrl"`
 	EnableSignAuthnRequest bool   `json:"enableSignAuthnRequest"`
+	EmailRegex             string `xorm:"varchar(200)" json:"emailRegex"`
 
 	ProviderUrl string `xorm:"varchar(200)" json:"providerUrl"`
 }
@@ -200,6 +203,13 @@ func UpdateProvider(id string, provider *Provider) (bool, error) {
 		return false, nil
 	}
 
+	if provider.EmailRegex != "" {
+		_, err := regexp.Compile(provider.EmailRegex)
+		if err != nil {
+			return false, err
+		}
+	}
+
 	if name != provider.Name {
 		err := providerChangeTrigger(name, provider.Name)
 		if err != nil {
@@ -232,6 +242,13 @@ func AddProvider(provider *Provider) (bool, error) {
 	if provider.Type == "Tencent Cloud COS" {
 		provider.Endpoint = util.GetEndPoint(provider.Endpoint)
 		provider.IntranetEndpoint = util.GetEndPoint(provider.IntranetEndpoint)
+	}
+
+	if provider.EmailRegex != "" {
+		_, err := regexp.Compile(provider.EmailRegex)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	affected, err := ormer.Engine.Insert(provider)
@@ -309,6 +326,12 @@ func GetPaymentProvider(p *Provider) (pp.PaymentProvider, error) {
 			return nil, err
 		}
 		return pp, nil
+	} else if typ == "AirWallex" {
+		pp, err := pp.NewAirwallexPaymentProvider(p.ClientId, p.ClientSecret)
+		if err != nil {
+			return nil, err
+		}
+		return pp, nil
 	} else if typ == "Balance" {
 		pp, err := pp.NewBalancePaymentProvider()
 		if err != nil {
@@ -357,6 +380,44 @@ func GetCaptchaProviderByApplication(applicationId, isCurrentProvider, lang stri
 		}
 		if provider.Provider.Category == "Captcha" {
 			return GetCaptchaProviderByOwnerName(util.GetId(provider.Provider.Owner, provider.Provider.Name), lang)
+		}
+	}
+	return nil, nil
+}
+
+func GetFaceIdProviderByOwnerName(applicationId, lang string) (*Provider, error) {
+	owner, name := util.GetOwnerAndNameFromId(applicationId)
+	provider := Provider{Owner: owner, Name: name, Category: "Face ID"}
+	existed, err := ormer.Engine.Get(&provider)
+	if err != nil {
+		return nil, err
+	}
+
+	if !existed {
+		return nil, fmt.Errorf(i18n.Translate(lang, "provider:the provider: %s does not exist"), applicationId)
+	}
+
+	return &provider, nil
+}
+
+func GetFaceIdProviderByApplication(applicationId, isCurrentProvider, lang string) (*Provider, error) {
+	if isCurrentProvider == "true" {
+		return GetFaceIdProviderByOwnerName(applicationId, lang)
+	}
+	application, err := GetApplication(applicationId)
+	if err != nil {
+		return nil, err
+	}
+
+	if application == nil || len(application.Providers) == 0 {
+		return nil, fmt.Errorf(i18n.Translate(lang, "provider:Invalid application id"))
+	}
+	for _, provider := range application.Providers {
+		if provider.Provider == nil {
+			continue
+		}
+		if provider.Provider.Category == "Face ID" {
+			return GetFaceIdProviderByOwnerName(util.GetId(provider.Provider.Owner, provider.Provider.Name), lang)
 		}
 	}
 	return nil, nil
@@ -414,6 +475,7 @@ func FromProviderToIdpInfo(ctx *context.Context, provider *Provider) *idp.Provid
 		AuthURL:       provider.CustomAuthUrl,
 		UserInfoURL:   provider.CustomUserInfoUrl,
 		UserMapping:   provider.UserMapping,
+		DisableSsl:    provider.DisableSsl,
 	}
 
 	if provider.Type == "WeChat" {
@@ -421,7 +483,7 @@ func FromProviderToIdpInfo(ctx *context.Context, provider *Provider) *idp.Provid
 			providerInfo.ClientId = provider.ClientId2
 			providerInfo.ClientSecret = provider.ClientSecret2
 		}
-	} else if provider.Type == "AzureAD" || provider.Type == "AzureADB2C" || provider.Type == "ADFS" || provider.Type == "Okta" {
+	} else if provider.Type == "ADFS" || provider.Type == "AzureAD" || provider.Type == "AzureADB2C" || provider.Type == "Casdoor" || provider.Type == "Okta" {
 		providerInfo.HostUrl = provider.Domain
 	}
 
