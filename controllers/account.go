@@ -15,11 +15,14 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/beego/beego/v2/core/logs"
+	"github.com/casdoor/casdoor/captcha"
 	"github.com/casdoor/casdoor/form"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
@@ -75,16 +78,10 @@ type LaravelResponse struct {
 // @Tag Login API
 // @Title Signup
 // @Description sign up a new user
-// @Param   username     formData    string  true        "The username to sign up"
-// @Param   password     formData    string  true        "The password"
+// @Param   body    body   form.AuthForm  true        "Signup request"
 // @Success 200 {object} controllers.Response The Response object
 // @router /signup [post]
 func (c *ApiController) Signup() {
-	if c.GetSessionUsername() != "" {
-		c.ResponseError(c.T("account:Please sign out first"), c.GetSessionUsername())
-		return
-	}
-
 	var authForm form.AuthForm
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &authForm)
 	if err != nil {
@@ -123,6 +120,34 @@ func (c *ApiController) Signup() {
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
+	}
+
+	var enableCaptcha bool
+	if enableCaptcha, err = object.CheckToEnableCaptcha(application, authForm.Organization, authForm.Username, clientIp); err != nil {
+		c.ResponseError(err.Error())
+		return
+	} else if enableCaptcha {
+		captchaProvider, err := object.GetCaptchaProviderByApplication(util.GetId(application.Owner, application.Name), "false", c.GetAcceptLanguage())
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if captchaProvider.Type != "Default" {
+			authForm.ClientSecret = captchaProvider.ClientSecret
+		}
+
+		var isHuman bool
+		isHuman, err = captcha.VerifyCaptchaByCaptchaType(authForm.CaptchaType, authForm.CaptchaToken, captchaProvider.ClientId, authForm.ClientSecret, captchaProvider.ClientId2)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if !isHuman {
+			c.ResponseError(c.T("verification:Turing test failed."))
+			return
+		}
 	}
 
 	msg := object.CheckUserSignup(application, organization, &authForm, c.GetAcceptLanguage())
@@ -197,7 +222,7 @@ func (c *ApiController) Signup() {
 
 	userType := "normal-user"
 	if authForm.Plan != "" && authForm.Pricing != "" {
-		err = object.CheckPricingAndPlan(authForm.Organization, authForm.Pricing, authForm.Plan)
+		err = object.CheckPricingAndPlan(authForm.Organization, authForm.Pricing, authForm.Plan, c.GetAcceptLanguage())
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -218,7 +243,7 @@ func (c *ApiController) Signup() {
 		Tag:               authForm.Tag,
 		Education:         authForm.Education,
 		Avatar:            organization.DefaultAvatar,
-		Email:             authForm.Email,
+		Email:             strings.ToLower(authForm.Email),
 		Phone:             authForm.Phone,
 		CountryCode:       authForm.CountryCode,
 		Address:           []string{},
@@ -235,9 +260,11 @@ func (c *ApiController) Signup() {
 		Invitation:        invitationName,
 		InvitationCode:    authForm.InvitationCode,
 		EmailVerified:     userEmailVerified,
+		RegisterType:      "Application Signup",
+		RegisterSource:    fmt.Sprintf("%s/%s", authForm.Organization, application.Name),
 	}
 
-	if len(organization.Tags) > 0 {
+	if user.Tag == "" && len(organization.Tags) > 0 {
 		tokens := strings.Split(organization.Tags[0], "|")
 		if len(tokens) > 0 {
 			user.Tag = tokens[0]
@@ -258,6 +285,10 @@ func (c *ApiController) Signup() {
 
 	if application.DefaultGroup != "" && user.Groups == nil {
 		user.Groups = []string{application.DefaultGroup}
+	}
+
+	if application.DefaultTag != "" && user.Tag == "" {
+		user.Tag = application.DefaultTag
 	}
 
 	affected, err := object.AddUser(user, c.GetAcceptLanguage())
@@ -288,6 +319,8 @@ func (c *ApiController) Signup() {
 
 	if user.Type == "normal-user" {
 		c.SetSessionUsername(user.GetId())
+	} else if user.Type == "paid-user" {
+		c.SetSession("paidUsername", user.GetId())
 	}
 
 	if authForm.Email != "" {
@@ -312,6 +345,40 @@ func (c *ApiController) Signup() {
 	userId := user.GetId()
 	util.LogInfo(c.Ctx, "API: [%s] is signed up as new user", userId)
 
+	// Check if this is an OAuth flow and automatically generate code
+	clientId := c.Ctx.Input.Query("clientId")
+	responseType := c.Ctx.Input.Query("responseType")
+	redirectUri := c.Ctx.Input.Query("redirectUri")
+	scope := c.Ctx.Input.Query("scope")
+	state := c.Ctx.Input.Query("state")
+	nonce := c.Ctx.Input.Query("nonce")
+	codeChallenge := c.Ctx.Input.Query("code_challenge")
+
+	// If OAuth parameters are present, generate OAuth code and return it
+	if clientId != "" && responseType == ResponseTypeCode {
+		consentRequired, err := object.CheckConsentRequired(user, application, scope)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if consentRequired {
+			c.ResponseOk(map[string]bool{"required": true})
+			return
+		}
+
+		code, err := object.GetOAuthCode(userId, clientId, "", "password", responseType, redirectUri, scope, state, nonce, codeChallenge, "", c.Ctx.Request.Host, c.GetAcceptLanguage())
+		if err != nil {
+			c.ResponseError(err.Error(), nil)
+			return
+		}
+
+		resp := codeToResponse(code)
+		c.Data["json"] = resp
+		c.ServeJSON()
+		return
+	}
+
 	c.ResponseOk(userId)
 }
 
@@ -326,9 +393,9 @@ func (c *ApiController) Signup() {
 // @router /logout [post]
 func (c *ApiController) Logout() {
 	// https://openid.net/specs/openid-connect-rpinitiated-1_0-final.html
-	accessToken := c.Input().Get("id_token_hint")
-	redirectUri := c.Input().Get("post_logout_redirect_uri")
-	state := c.Input().Get("state")
+	accessToken := c.GetString("id_token_hint")
+	redirectUri := c.GetString("post_logout_redirect_uri")
+	state := c.GetString("state")
 
 	user := c.GetSessionUsername()
 
@@ -339,18 +406,25 @@ func (c *ApiController) Logout() {
 			return
 		}
 
+		// Retrieve application and token before clearing the session
+		application := c.GetSessionApplication()
+		sessionToken := c.GetSessionToken()
+
 		c.ClearUserSession()
 		c.ClearTokenSession()
-		owner, username := util.GetOwnerAndNameFromId(user)
-		_, err := object.DeleteSessionId(util.GetSessionId(owner, username, object.CasdoorApplication), c.Ctx.Input.CruSession.SessionID())
-		if err != nil {
+
+		if err := c.deleteUserSession(user); err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		util.LogInfo(c.Ctx, "API: [%s] logged out", user)
+		// Propagate logout to external Custom OAuth2 providers
+		object.InvokeCustomProviderLogout(application, sessionToken)
 
-		application := c.GetSessionApplication()
+		// Send OIDC Back-Channel Logout notifications (https://openid.net/specs/openid-connect-backchannel-1_0.html)
+		bcOwner, bcUsername := util.GetOwnerAndNameFromIdNoCheck(user)
+		object.SendBackchannelLogout(bcOwner, bcUsername, "", c.Ctx.Request.Host)
+
 		if application == nil || application.Name == "app-built-in" || application.HomepageUrl == "" {
 			c.ResponseOk(user)
 			return
@@ -378,7 +452,7 @@ func (c *ApiController) Logout() {
 			return
 		}
 		if application == nil {
-			c.ResponseError(fmt.Sprintf(c.T("auth:The application: %s does not exist")), token.Application)
+			c.ResponseError(fmt.Sprintf(c.T("auth:The application: %s does not exist"), token.Application))
 			return
 		}
 
@@ -388,16 +462,18 @@ func (c *ApiController) Logout() {
 
 		c.ClearUserSession()
 		c.ClearTokenSession()
-		// TODO https://github.com/casdoor/casdoor/pull/1494#discussion_r1095675265
-		owner, username := util.GetOwnerAndNameFromId(user)
 
-		_, err = object.DeleteSessionId(util.GetSessionId(owner, username, object.CasdoorApplication), c.Ctx.Input.CruSession.SessionID())
-		if err != nil {
+		// TODO https://github.com/casdoor/casdoor/pull/1494#discussion_r1095675265
+		if err := c.deleteUserSession(user); err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		util.LogInfo(c.Ctx, "API: [%s] logged out", user)
+		// Propagate logout to external Custom OAuth2 providers
+		object.InvokeCustomProviderLogout(application, accessToken)
+
+		// Send OIDC Back-Channel Logout notifications (https://openid.net/specs/openid-connect-backchannel-1_0.html)
+		object.SendBackchannelLogout(token.Organization, token.User, "", c.Ctx.Request.Host)
 
 		if redirectUri == "" {
 			c.ResponseOk()
@@ -421,20 +497,139 @@ func (c *ApiController) Logout() {
 	}
 }
 
+// SsoLogout
+// @Title SsoLogout
+// @Tag Login API
+// @Description logout the current user from all applications or current session only
+// @Param   logoutAll   query    string  false     "Whether to logout from all sessions. Accepted values: 'true', '1', or empty (default: true). Any other value means false."
+// @Success 200 {object} controllers.Response The Response object
+// @router /sso-logout [get,post]
+func (c *ApiController) SsoLogout() {
+	user := c.GetSessionUsername()
+
+	if user == "" {
+		c.ResponseOk()
+		return
+	}
+
+	// Check if user wants to logout from all sessions or just current session
+	// Default is true for backward compatibility
+	logoutAll := c.Ctx.Input.Query("logoutAll")
+	logoutAllSessions := logoutAll == "" || logoutAll == "true" || logoutAll == "1"
+
+	// Retrieve application and token before clearing the session
+	ssoApplication := c.GetSessionApplication()
+	ssoSessionToken := c.GetSessionToken()
+
+	c.ClearUserSession()
+	c.ClearTokenSession()
+	owner, username, err := util.GetOwnerAndNameFromIdWithError(user)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	currentSessionId := c.Ctx.Input.CruSession.SessionID(context.Background())
+	_, err = object.DeleteSessionId(util.GetSessionId(owner, username, object.CasdoorApplication), currentSessionId)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	var tokens []*object.Token
+	var sessionIds []string
+
+	// Get tokens for notification (needed for both session-level and full logout)
+	// This enables subsystems to identify and invalidate corresponding access tokens
+	// Note: Tokens must be retrieved BEFORE expiration to include their hashes in the notification
+	tokens, err = object.GetTokensByUser(owner, username)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	// Send OIDC Back-Channel Logout notifications BEFORE expiring tokens,
+	// because SendBackchannelLogout calls GetActiveTokensByUser (expires_in > 0).
+	object.SendBackchannelLogout(owner, username, currentSessionId, c.Ctx.Request.Host)
+
+	if logoutAllSessions {
+		// Logout from all sessions: expire all tokens and delete all sessions
+		_, err = object.ExpireTokenByUser(owner, username)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		sessions, err := object.GetUserSessions(owner, username)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		for _, session := range sessions {
+			sessionIds = append(sessionIds, session.SessionId...)
+		}
+		object.DeleteBeegoSession(sessionIds)
+
+		_, err = object.DeleteAllUserSessions(owner, username)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		util.LogInfo(c.Ctx, "API: [%s] logged out from all applications", user)
+	} else {
+		// Logout from current session only
+		sessionIds = []string{currentSessionId}
+
+		// Only delete the current session's Beego session
+		object.DeleteBeegoSession(sessionIds)
+
+		util.LogInfo(c.Ctx, "API: [%s] logged out from current session", user)
+	}
+
+	// Send SSO logout notifications to all notification providers in the user's signup application
+	// Now includes session-level information for targeted logout
+	userObj, err := object.GetUser(user)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if userObj != nil {
+		err = object.SendSsoLogoutNotifications(userObj, sessionIds, tokens)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	// Propagate logout to external Custom OAuth2 providers
+	object.InvokeCustomProviderLogout(ssoApplication, ssoSessionToken)
+
+	c.ResponseOk()
+}
+
 // GetAccount
 // @Title GetAccount
 // @Tag Account API
 // @Description get the details of the current account
+// @Param   managedAccounts query string false "Whether to include managed accounts"
 // @Success 200 {object} controllers.Response The Response object
 // @router /get-account [get]
 func (c *ApiController) GetAccount() {
 	var err error
+	err = util.AppendWebConfigCookie(c.Ctx)
+	if err != nil {
+		logs.Error("AppendWebConfigCookie failed in GetAccount, error: %s", err)
+	}
+
 	user, ok := c.RequireSignedInUser()
 	if !ok {
 		return
 	}
 
-	managedAccounts := c.Input().Get("managedAccounts")
+	managedAccounts := c.Ctx.Input.Query("managedAccounts")
 	if managedAccounts == "1" {
 		user, err = object.ExtendManagedAccountsWithUser(user)
 		if err != nil {
@@ -549,12 +744,60 @@ func (c *ApiController) GetUserinfo2() {
 // GetCaptcha ...
 // @Tag Login API
 // @Title GetCaptcha
+// @Description Get captcha provider information for an application
+// @Param   applicationId     query string true  "The application id (owner/name)"
+// @Param   isCurrentProvider query string false "Whether to get the current provider"
 // @router /get-captcha [get]
 // @Success 200 {object} object.Userinfo The Response object
 func (c *ApiController) GetCaptcha() {
-	applicationId := c.Input().Get("applicationId")
-	isCurrentProvider := c.Input().Get("isCurrentProvider")
+	applicationId := c.Ctx.Input.Query("applicationId")
+	isCurrentProvider := c.Ctx.Input.Query("isCurrentProvider")
 
+	// When isCurrentProvider == "true", the frontend passes a provider ID instead of an application ID.
+	// In that case, skip application lookup and rule evaluation, and just return the provider config.
+	shouldSkipCaptcha := false
+
+	if isCurrentProvider != "true" {
+		application, err := object.GetApplication(applicationId)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if application == nil {
+			c.ResponseError(fmt.Sprintf(c.T("auth:The application: %s does not exist"), applicationId))
+			return
+		}
+
+		// Check the CAPTCHA rule to determine if CAPTCHA should be shown
+		clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
+
+		// For Internet-Only rule, we can determine on the backend if CAPTCHA should be shown
+		// For other rules (Dynamic, Always), we need to return the CAPTCHA config
+		for _, providerItem := range application.Providers {
+			if providerItem.Provider == nil || providerItem.Provider.Category != "Captcha" {
+				continue
+			}
+
+			// For "None" rule, skip CAPTCHA
+			if providerItem.Rule == "None" || providerItem.Rule == "" {
+				shouldSkipCaptcha = true
+			} else if providerItem.Rule == "Internet-Only" {
+				// For Internet-Only rule, check if the client is from intranet
+				if !util.IsInternetIp(clientIp) {
+					// Client is from intranet, skip CAPTCHA
+					shouldSkipCaptcha = true
+				}
+			}
+
+			break // Only check the first CAPTCHA provider
+		}
+
+		if shouldSkipCaptcha {
+			c.ResponseOk(Captcha{Type: "none"})
+			return
+		}
+	}
 	captchaProvider, err := object.GetCaptchaProviderByApplication(applicationId, isCurrentProvider, c.GetAcceptLanguage())
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -587,4 +830,25 @@ func (c *ApiController) GetCaptcha() {
 	}
 
 	c.ResponseOk(Captcha{Type: "none"})
+}
+
+func (c *ApiController) deleteUserSession(user string) error {
+	owner, username, err := util.GetOwnerAndNameFromIdWithError(user)
+	if err != nil {
+		return err
+	}
+
+	// Casdoor session ID derived from owner, username, and application
+	sessionId := util.GetSessionId(owner, username, object.CasdoorApplication)
+
+	// Explicitly get the Beego session ID from the context
+	beegoSessionId := c.Ctx.Input.CruSession.SessionID(context.Background())
+
+	_, err = object.DeleteSessionId(sessionId, beegoSessionId)
+	if err != nil {
+		return err
+	}
+
+	util.LogInfo(c.Ctx, "API: [%s] logged out", user)
+	return nil
 }

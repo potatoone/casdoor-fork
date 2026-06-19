@@ -13,7 +13,8 @@
 // limitations under the License.
 
 import React from "react";
-import {Button, Card, Result, Spin} from "antd";
+import {Button, Card, Result} from "antd";
+import Loading from "../common/Loading";
 import i18next from "i18next";
 import {authConfig} from "./Auth";
 import * as ApplicationBackend from "../backend/ApplicationBackend";
@@ -34,7 +35,7 @@ class ResultPage extends React.Component {
     if (this.state.applicationName !== undefined) {
       this.getApplication();
     } else {
-      Setting.showMessage("error", `Unknown application name: ${this.state.applicationName}`);
+      Setting.showMessage("error", `${i18next.t("general:Unknown application name")}: ${this.state.applicationName}`);
     }
   }
 
@@ -82,9 +83,7 @@ class ResultPage extends React.Component {
 
     if (application === null) {
       return (
-        <div style={{display: "flex", justifyContent: "center", alignItems: "center"}}>
-          <Spin size="large" tip={i18next.t("login:Loading")} style={{paddingTop: "10%"}} />
-        </div>
+        <Loading type="page" tip={i18next.t("login:Loading")} />
       );
     }
 

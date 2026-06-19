@@ -14,8 +14,46 @@
 
 import React from "react";
 import {Tooltip} from "antd";
+import CryptoJS from "crypto-js";
 import * as Util from "./Util";
 import * as Setting from "../Setting";
+
+// PKCE helper functions
+function generateCodeVerifier() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return base64UrlEncode(array);
+}
+
+function base64UrlEncode(buffer) {
+  const base64 = btoa(String.fromCharCode.apply(null, buffer));
+  return base64
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+}
+
+function generateCodeChallenge(verifier) {
+  // Convert verifier to UTF-8 bytes and compute SHA-256 hash
+  const hash = CryptoJS.SHA256(CryptoJS.enc.Utf8.parse(verifier));
+  const base64Hash = CryptoJS.enc.Base64.stringify(hash);
+  return base64Hash
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
+}
+
+function storeCodeVerifier(state, verifier) {
+  localStorage.setItem(`pkce_verifier_${state}`, verifier);
+}
+
+export function getCodeVerifier(state) {
+  return localStorage.getItem(`pkce_verifier_${state}`);
+}
+
+export function clearCodeVerifier(state) {
+  localStorage.removeItem(`pkce_verifier_${state}`);
+}
 
 const authInfo = {
   Google: {
@@ -290,6 +328,10 @@ const authInfo = {
     scope: "users.read%20tweet.read",
     endpoint: "https://twitter.com/i/oauth2/authorize",
   },
+  Telegram: {
+    scope: "",
+    endpoint: "https://core.telegram.org/widgets/login",
+  },
   Typetalk: {
     scope: "my",
     endpoint: "https://typetalk.com/oauth2/authorize",
@@ -338,7 +380,8 @@ const authInfo = {
 
 export function getProviderUrl(provider) {
   if (provider.category === "OAuth") {
-    const endpoint = authInfo[provider.type].endpoint;
+    const type = provider.type.startsWith("Custom") ? "Custom" : provider.type;
+    const endpoint = authInfo[type].endpoint;
     const urlObj = new URL(endpoint);
 
     let host = urlObj.host;
@@ -359,24 +402,27 @@ export function getProviderUrl(provider) {
   }
 }
 
-export function getProviderLogoWidget(provider) {
+export function getProviderLogoWidget(provider, options = {}) {
   if (provider === undefined) {
     return null;
   }
 
   const url = getProviderUrl(provider);
-  if (url !== "") {
+  const disableLink = options.disableLink === true;
+  const imgEl = <img width={36} height={36} src={Setting.getProviderLogoURL(provider)} alt={provider.displayName} />;
+
+  if (url !== "" && !disableLink) {
     return (
       <Tooltip title={provider.type}>
         <a target="_blank" rel="noreferrer" href={getProviderUrl(provider)}>
-          <img width={36} height={36} src={Setting.getProviderLogoURL(provider)} alt={provider.displayName} />
+          {imgEl}
         </a>
       </Tooltip>
     );
   } else {
     return (
       <Tooltip title={provider.type}>
-        <img width={36} height={36} src={Setting.getProviderLogoURL(provider)} alt={provider.displayName} />
+        {imgEl}
       </Tooltip>
     );
   }
@@ -386,14 +432,27 @@ export function getAuthUrl(application, provider, method, code) {
   if (application === null || provider === null) {
     return "";
   }
-
-  let endpoint = authInfo[provider.type].endpoint;
+  const type = provider.type.startsWith("Custom") ? "Custom" : provider.type;
+  let endpoint = authInfo[type].endpoint;
   const redirectOrigin = application.forcedRedirectOrigin ? application.forcedRedirectOrigin : window.location.origin;
   let redirectUri = `${redirectOrigin}/callback`;
-  let scope = authInfo[provider.type].scope;
-  const isShortState = (provider.type === "WeChat" && navigator.userAgent.includes("MicroMessenger")) || (provider.type === "Twitter");
-  const state = Util.getStateFromQueryParams(application.name, provider.name, method, isShortState);
-  const codeChallenge = "P3S-a7dr8bgM4bF6vOyiKkKETDl16rcAzao9F8UIL1Y"; // SHA256(Base64-URL-encode("casdoor-verifier"))
+  let scope = authInfo[type].scope;
+  // Allow provider.scopes to override default scope if specified
+  if (provider.scopes && provider.scopes.trim() !== "") {
+    scope = provider.scopes;
+  }
+  const isTelegramOIDC = provider.type === "Telegram" || (provider.type === "Custom" && provider.customAuthUrl && provider.customAuthUrl.includes("oauth.telegram.org"));
+  const isShortState = (provider.type === "WeChat" && navigator.userAgent.includes("MicroMessenger")) || (provider.type === "Twitter") || isTelegramOIDC;
+  let applicationName = application.name;
+  if (application?.isShared) {
+    applicationName = `${application.name}-org-${application.organization}`;
+  }
+  const state = Util.getStateFromQueryParams(applicationName, provider.name, method, isShortState);
+
+  // Generate PKCE code verifier and challenge dynamically
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  storeCodeVerifier(state, codeVerifier);
 
   if (provider.type === "AzureAD") {
     if (provider.domain !== "") {
@@ -442,7 +501,7 @@ export function getAuthUrl(application, provider, method, code) {
     if (provider.subType === "Internal") {
       if (provider.method === "Silent") {
         endpoint = authInfo[provider.type].silentEndpoint;
-        return `${endpoint}?appid=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}&response_type=code#wechat_redirect`;
+        return `${endpoint}?appid=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}&response_type=code&agentid=${provider.appId}#wechat_redirect`;
       } else if (provider.method === "Normal") {
         endpoint = authInfo[provider.type].internalEndpoint;
         return `${endpoint}?login_type=CorpApp&appid=${provider.clientId}&agentid=${provider.appId}&redirect_uri=${redirectUri}&state=${state}`;
@@ -452,7 +511,7 @@ export function getAuthUrl(application, provider, method, code) {
     } else if (provider.subType === "Third-party") {
       if (provider.method === "Silent") {
         endpoint = authInfo[provider.type].silentEndpoint;
-        return `${endpoint}?appid=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}&response_type=code#wechat_redirect`;
+        return `${endpoint}?appid=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}&response_type=code&agentid=${provider.appId}#wechat_redirect`;
       } else if (provider.method === "Normal") {
         endpoint = authInfo[provider.type].endpoint;
         return `${endpoint}?login_type=ServiceApp&appid=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}`;
@@ -487,8 +546,12 @@ export function getAuthUrl(application, provider, method, code) {
     return `${endpoint}?client_key=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}`;
   } else if (provider.type === "Kwai") {
     return `${endpoint}?app_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}`;
-  } else if (provider.type === "Custom") {
-    return `${provider.customAuthUrl}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${provider.scopes}&response_type=code&state=${state}`;
+  } else if (type === "Custom") {
+    let authUrl = `${provider.customAuthUrl}?client_id=${provider.clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(provider.scopes)}&response_type=code&state=${encodeURIComponent(state)}`;
+    if (provider.enablePkce) {
+      authUrl += `&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+    }
+    return authUrl;
   } else if (provider.type === "Bilibili") {
     return `${endpoint}#/?client_id=${provider.clientId}&return_url=${redirectUri}&state=${state}&response_type=code`;
   } else if (provider.type === "Deezer") {
@@ -499,6 +562,10 @@ export function getAuthUrl(application, provider, method, code) {
     return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${state}&grant_options[]=per-user`;
   } else if (provider.type === "Twitter" || provider.type === "Fitbit") {
     return `${endpoint}?client_id=${provider.clientId}&redirect_uri=${redirectUri}&state=${state}&response_type=code&scope=${scope}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+  } else if (provider.type === "Telegram") {
+    // Telegram uses widget-based authentication
+    // Redirect to a page that displays the Telegram login widget
+    return `${redirectOrigin}/telegram-login?state=${state}`;
   } else if (provider.type === "MetaMask") {
     return `${redirectUri}?state=${state}`;
   } else if (provider.type === "Web3Onboard") {

@@ -34,18 +34,32 @@ import (
 // @Success 200 {object} controllers.Response The Response object
 // @router /enforce [post]
 func (c *ApiController) Enforce() {
-	permissionId := c.Input().Get("permissionId")
-	modelId := c.Input().Get("modelId")
-	resourceId := c.Input().Get("resourceId")
-	enforcerId := c.Input().Get("enforcerId")
-	owner := c.Input().Get("owner")
+	permissionId := c.Ctx.Input.Query("permissionId")
+	modelId := c.Ctx.Input.Query("modelId")
+	resourceId := c.Ctx.Input.Query("resourceId")
+	enforcerId := c.Ctx.Input.Query("enforcerId")
+	owner := c.Ctx.Input.Query("owner")
+
+	params := []string{permissionId, modelId, resourceId, enforcerId, owner}
+	nonEmpty := 0
+	for _, param := range params {
+		if param != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty > 1 {
+		c.ResponseError("Only one of the parameters (permissionId, modelId, resourceId, enforcerId, owner) should be provided")
+		return
+	}
 
 	if len(c.Ctx.Input.RequestBody) == 0 {
 		c.ResponseError("The request body should not be empty")
 		return
 	}
 
-	var request []string
+	// Accept both plain string arrays (["alice","data1","read"]) and mixed arrays
+	// with JSON objects ([{"DivisionGuid":"x"}, "resource", "read"]) for ABAC support.
+	var request []interface{}
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &request)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -62,8 +76,8 @@ func (c *ApiController) Enforce() {
 		res := []bool{}
 		keyRes := []string{}
 
-		// type transformation
-		interfaceRequest := util.StringToInterfaceArray(request)
+		// Convert elements: JSON-object strings and maps become anonymous structs for ABAC.
+		interfaceRequest := util.InterfaceToEnforceArray(request)
 
 		enforceResult, err := enforcer.Enforce(interfaceRequest...)
 		if err != nil {
@@ -107,8 +121,12 @@ func (c *ApiController) Enforce() {
 
 	permissions := []*object.Permission{}
 	if modelId != "" {
-		owner, modelName := util.GetOwnerAndNameFromId(modelId)
-		permissions, err = object.GetPermissionsByModel(owner, modelName)
+		owner, _, err := util.GetOwnerAndNameFromIdWithError(modelId)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		permissions, err = object.GetPermissionsByModel(owner, modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -164,12 +182,25 @@ func (c *ApiController) Enforce() {
 // @Success 200 {object} controllers.Response The Response object
 // @router /batch-enforce [post]
 func (c *ApiController) BatchEnforce() {
-	permissionId := c.Input().Get("permissionId")
-	modelId := c.Input().Get("modelId")
-	enforcerId := c.Input().Get("enforcerId")
-	owner := c.Input().Get("owner")
+	permissionId := c.Ctx.Input.Query("permissionId")
+	modelId := c.Ctx.Input.Query("modelId")
+	enforcerId := c.Ctx.Input.Query("enforcerId")
+	owner := c.Ctx.Input.Query("owner")
 
-	var requests [][]string
+	params := []string{permissionId, modelId, enforcerId, owner}
+	nonEmpty := 0
+	for _, param := range params {
+		if param != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty > 1 {
+		c.ResponseError("Only one of the parameters (permissionId, modelId, enforcerId, owner) should be provided")
+		return
+	}
+
+	// Accept both string arrays and mixed arrays with JSON objects for ABAC support.
+	var requests [][]interface{}
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &requests)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -186,8 +217,8 @@ func (c *ApiController) BatchEnforce() {
 		res := [][]bool{}
 		keyRes := []string{}
 
-		// type transformation
-		interfaceRequests := util.StringToInterfaceArray2d(requests)
+		// Convert elements: JSON-object strings and maps become anonymous structs for ABAC.
+		interfaceRequests := util.InterfaceToEnforceArray2d(requests)
 
 		enforceResult, err := enforcer.BatchEnforce(interfaceRequests)
 		if err != nil {
@@ -231,8 +262,12 @@ func (c *ApiController) BatchEnforce() {
 
 	permissions := []*object.Permission{}
 	if modelId != "" {
-		owner, modelName := util.GetOwnerAndNameFromId(modelId)
-		permissions, err = object.GetPermissionsByModel(owner, modelName)
+		owner, _, err := util.GetOwnerAndNameFromIdWithError(modelId)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		permissions, err = object.GetPermissionsByModel(owner, modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -271,8 +306,15 @@ func (c *ApiController) BatchEnforce() {
 	c.ResponseOk(res, keyRes)
 }
 
+// GetAllObjects
+// @Title GetAllObjects
+// @Tag Enforcer API
+// @Description Get all objects for a user (Casbin API)
+// @Param   userId    query   string  false   "user id like built-in/admin"
+// @Success 200 {object} controllers.Response The Response object
+// @router /get-all-objects [get]
 func (c *ApiController) GetAllObjects() {
-	userId := c.Input().Get("userId")
+	userId := c.Ctx.Input.Query("userId")
 	if userId == "" {
 		userId = c.GetSessionUsername()
 		if userId == "" {
@@ -290,8 +332,15 @@ func (c *ApiController) GetAllObjects() {
 	c.ResponseOk(objects)
 }
 
+// GetAllActions
+// @Title GetAllActions
+// @Tag Enforcer API
+// @Description Get all actions for a user (Casbin API)
+// @Param   userId    query   string  false   "user id like built-in/admin"
+// @Success 200 {object} controllers.Response The Response object
+// @router /get-all-actions [get]
 func (c *ApiController) GetAllActions() {
-	userId := c.Input().Get("userId")
+	userId := c.Ctx.Input.Query("userId")
 	if userId == "" {
 		userId = c.GetSessionUsername()
 		if userId == "" {
@@ -309,8 +358,15 @@ func (c *ApiController) GetAllActions() {
 	c.ResponseOk(actions)
 }
 
+// GetAllRoles
+// @Title GetAllRoles
+// @Tag Enforcer API
+// @Description Get all roles for a user (Casbin API)
+// @Param   userId    query   string  false   "user id like built-in/admin"
+// @Success 200 {object} controllers.Response The Response object
+// @router /get-all-roles [get]
 func (c *ApiController) GetAllRoles() {
-	userId := c.Input().Get("userId")
+	userId := c.Ctx.Input.Query("userId")
 	if userId == "" {
 		userId = c.GetSessionUsername()
 		if userId == "" {

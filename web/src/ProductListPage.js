@@ -145,7 +145,7 @@ class ProductListPage extends BaseListPage {
         },
       },
       {
-        title: i18next.t("user:Tag"),
+        title: i18next.t("general:Tag"),
         dataIndex: "tag",
         key: "tag",
         width: "160px",
@@ -153,20 +153,15 @@ class ProductListPage extends BaseListPage {
         ...this.getColumnSearchProps("tag"),
       },
       {
-        title: i18next.t("payment:Currency"),
-        dataIndex: "currency",
-        key: "currency",
-        width: "120px",
-        sorter: true,
-        ...this.getColumnSearchProps("currency"),
-      },
-      {
-        title: i18next.t("product:Price"),
+        title: i18next.t("order:Price"),
         dataIndex: "price",
         key: "price",
-        width: "120px",
+        width: "160px",
         sorter: true,
         ...this.getColumnSearchProps("price"),
+        render: (text, record, index) => {
+          return Setting.getPriceDisplay(record.price, record.currency);
+        },
       },
       {
         title: i18next.t("product:Quantity"),
@@ -257,12 +252,13 @@ class ProductListPage extends BaseListPage {
         fixed: (Setting.isMobile()) ? "false" : "right",
         render: (text, record, index) => {
           const isCreatedByPlan = record.tag === "auto_created_product_for_plan";
+          const isAdmin = Setting.isLocalAdminUser(this.props.account);
           return (
             <div>
               <Button style={{marginTop: "10px", marginBottom: "10px", marginRight: "10px"}} onClick={() => this.props.history.push(`/products/${record.owner}/${record.name}/buy`)}>{i18next.t("product:Buy")}</Button>
-              <Button style={{marginTop: "10px", marginBottom: "10px", marginRight: "10px"}} type="primary" onClick={() => this.props.history.push(`/products/${record.owner}/${record.name}`)}>{i18next.t("general:Edit")}</Button>
+              <Button style={{marginTop: "10px", marginBottom: "10px", marginRight: "10px"}} type="primary" onClick={() => this.props.history.push({pathname: `/products/${record.owner}/${record.name}`, mode: isAdmin ? "edit" : "view"})}>{isAdmin ? i18next.t("general:Edit") : i18next.t("general:View")}</Button>
               <PopconfirmModal
-                disabled={isCreatedByPlan}
+                disabled={isCreatedByPlan || !isAdmin}
                 title={i18next.t("general:Sure to delete") + `: ${record.name} ?`}
                 onConfirm={() => this.deleteProduct(index)}
               >
@@ -283,13 +279,16 @@ class ProductListPage extends BaseListPage {
     return (
       <div>
         <Table scroll={{x: "max-content"}} columns={columns} dataSource={products} rowKey={(record) => `${record.owner}/${record.name}`} size="middle" bordered pagination={paginationProps}
-          title={() => (
-            <div>
-              {i18next.t("general:Products")}&nbsp;&nbsp;&nbsp;&nbsp;
-              <Button type="primary" size="small" onClick={this.addProduct.bind(this)}>{i18next.t("general:Add")}</Button>
-            </div>
-          )}
-          loading={this.state.loading}
+          title={() => {
+            const isAdmin = Setting.isLocalAdminUser(this.props.account);
+            return (
+              <div>
+                {i18next.t("general:Products")}&nbsp;&nbsp;&nbsp;&nbsp;
+                <Button type="primary" size="small" disabled={!isAdmin} onClick={this.addProduct.bind(this)}>{i18next.t("general:Add")}</Button>
+              </div>
+            );
+          }}
+          loading={this.getTableLoading()}
           onChange={this.handleTableChange}
         />
       </div>

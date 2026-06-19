@@ -27,6 +27,8 @@ import {MfaVerifyForm} from "./mfa/MfaVerifyForm";
 export const EmailMfaType = "email";
 export const SmsMfaType = "sms";
 export const TotpMfaType = "app";
+export const RadiusMfaType = "radius";
+export const PushMfaType = "push";
 export const RecoveryMfaType = "recovery";
 
 class MfaSetupPage extends React.Component {
@@ -79,7 +81,7 @@ class MfaSetupPage extends React.Component {
             application: res.data,
           });
         } else {
-          Setting.showMessage("error", i18next.t("mfa:Failed to get application"));
+          Setting.showMessage("error", i18next.t("general:Failed to get"));
         }
       });
   }
@@ -147,11 +149,41 @@ class MfaSetupPage extends React.Component {
       );
     };
 
+    const renderRadiusLink = () => {
+      if (this.state.mfaType === RadiusMfaType) {
+        return null;
+      }
+      return (<Button type={"link"} onClick={() => {
+        this.setState({
+          mfaType: RadiusMfaType,
+        });
+        this.props.history.push(`/mfa/setup?mfaType=${RadiusMfaType}`);
+      }
+      }>{i18next.t("mfa:Use Radius")}</Button>
+      );
+    };
+
+    const renderPushLink = () => {
+      if (this.state.mfaType === PushMfaType) {
+        return null;
+      }
+      return (<Button type={"link"} onClick={() => {
+        this.setState({
+          mfaType: PushMfaType,
+        });
+        this.props.history.push(`/mfa/setup?mfaType=${PushMfaType}`);
+      }
+      }>{i18next.t("mfa:Use Push Notification")}</Button>
+      );
+    };
+
     return !this.state.isPromptPage ? (
       <React.Fragment>
         {renderSmsLink()}
         {renderEmailLink()}
         {renderTotpLink()}
+        {renderRadiusLink()}
+        {renderPushLink()}
       </React.Fragment>
     ) : null;
   }
@@ -190,7 +222,7 @@ class MfaSetupPage extends React.Component {
               Setting.showMessage("error", i18next.t("general:Failed to verify") + ": " + res.msg);
             }}
           />
-          <Col span={24} style={{display: "flex", justifyContent: "left"}}>
+          <Col span={24} style={{display: "flex", justifyContent: "center", flexWrap: "wrap"}}>
             {this.renderMfaTypeSwitch()}
           </Col>
         </div>

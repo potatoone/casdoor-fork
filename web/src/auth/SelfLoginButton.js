@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React from "react";
+import React, {memo} from "react";
 import {createButton} from "react-social-login-buttons";
+import * as Setting from "../Setting";
 
 class SelfLoginButton extends React.Component {
   generateIcon() {
-    const avatar = this.props.account.avatar;
+    const account = this.props.account;
+    const avatarUrl = Setting.getEffectiveAvatarUrl(account);
     return () => {
-      return <img width={36} height={36} src={avatar} alt="Sign in with Google" />;
+      if (!avatarUrl) {
+        return Setting.getAvatarPlaceholder(account.name, 36);
+      }
+      return <img width={36} height={36} src={avatarUrl} alt={account.name} />;
     };
   }
 
@@ -44,4 +49,4 @@ class SelfLoginButton extends React.Component {
   }
 }
 
-export default SelfLoginButton;
+export default memo(SelfLoginButton);

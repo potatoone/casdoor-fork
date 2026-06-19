@@ -29,10 +29,15 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/xorm-io/core"
+	"golang.org/x/oauth2"
 )
 
 func GetUserByField(organizationName string, field string, value string) (*User, error) {
 	if field == "" || value == "" {
+		return nil, nil
+	}
+
+	if !util.FilterSQLIdentifier(field) {
 		return nil, nil
 	}
 
@@ -57,6 +62,18 @@ func HasUserByField(organizationName string, field string, value string) bool {
 	return user != nil
 }
 
+func HasUserByPhoneAndCountryCode(organizationName string, phone string, countryCode string) bool {
+	if phone == "" {
+		return false
+	}
+	user := User{Owner: organizationName, Phone: phone, CountryCode: countryCode}
+	existed, err := ormer.Engine.Get(&user)
+	if err != nil {
+		panic(err)
+	}
+	return existed
+}
+
 func GetUserByFields(organization string, field string) (*User, error) {
 	isUsernameLowered := conf.GetConfigBool("isUsernameLowered")
 	if isUsernameLowered {
@@ -73,16 +90,31 @@ func GetUserByFields(organization string, field string) (*User, error) {
 
 	// check email
 	if strings.Contains(field, "@") {
-		user, err = GetUserByField(organization, "email", field)
+		normalizedEmail := strings.ToLower(field)
+		user, err = GetUserByField(organization, "email", normalizedEmail)
 		if user != nil || err != nil {
 			return user, err
 		}
 	}
 
 	// check phone
-	user, err = GetUserByField(organization, "phone", field)
-	if user != nil || err != nil {
-		return user, err
+	nationalPhone, regionCode := util.ParseE164Phone(field)
+	if regionCode != "" {
+		// E.164 number with a recognisable region: query by both phone and country_code
+		// so that two users in different countries sharing the same local number are distinguished.
+		u := User{Owner: organization, Phone: nationalPhone, CountryCode: regionCode}
+		existed, queryErr := ormer.Engine.Get(&u)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		if existed {
+			return &u, nil
+		}
+	} else {
+		user, err = GetUserByField(organization, "phone", nationalPhone)
+		if user != nil || err != nil {
+			return user, err
+		}
 	}
 
 	// check user ID
@@ -95,6 +127,38 @@ func GetUserByFields(organization string, field string) (*User, error) {
 	user, err = GetUserByField(organization, "id_card", field)
 	if user != nil || err != nil {
 		return user, err
+	}
+
+	return nil, nil
+}
+
+// GetUserByFieldsForSharedApp looks up a user for a shared application login.
+// If the application is shared and the user is not found in the given organization,
+// it searches all organizations that have this app as their default application.
+// Returns the User directly to avoid a redundant lookup in the caller.
+func GetUserByFieldsForSharedApp(application *Application, organization string, field string) (*User, error) {
+	user, err := GetUserByFields(organization, field)
+	if err != nil || user != nil || application == nil || !application.IsShared {
+		return user, err
+	}
+
+	var orgs []*Organization
+	err = ormer.Engine.Where("default_application = ?", application.Name).Find(&orgs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, org := range orgs {
+		if org.Name == organization {
+			continue
+		}
+		user, err = GetUserByFields(org.Name, field)
+		if err != nil {
+			return nil, err
+		}
+		if user != nil {
+			return user, nil
+		}
 	}
 
 	return nil, nil
@@ -180,7 +244,40 @@ func getUserExtraProperty(user *User, providerType, key string) (string, error) 
 	return extra[key], nil
 }
 
-func SetUserOAuthProperties(organization *Organization, user *User, providerType string, userInfo *idp.UserInfo) (bool, error) {
+// getOAuthTokenPropertyKey returns the property key for storing OAuth tokens
+func getOAuthTokenPropertyKey(providerType string, tokenType string) string {
+	return fmt.Sprintf("oauth_%s_%s", providerType, tokenType)
+}
+
+// GetUserOAuthAccessToken retrieves the OAuth access token for a specific provider
+func GetUserOAuthAccessToken(user *User, providerType string) string {
+	return getUserProperty(user, getOAuthTokenPropertyKey(providerType, "accessToken"))
+}
+
+// GetUserOAuthRefreshToken retrieves the OAuth refresh token for a specific provider
+func GetUserOAuthRefreshToken(user *User, providerType string) string {
+	return getUserProperty(user, getOAuthTokenPropertyKey(providerType, "refreshToken"))
+}
+
+func SetUserOAuthProperties(organization *Organization, user *User, providerType string, userInfo *idp.UserInfo, token *oauth2.Token, userMapping ...map[string]string) (bool, error) {
+	if IsFlexibleCustomProvider(providerType) {
+		return true, nil
+	}
+
+	// Store the original OAuth provider token if available
+	if token != nil && token.AccessToken != "" {
+		// Store tokens per provider in Properties map
+		setUserProperty(user, getOAuthTokenPropertyKey(providerType, "accessToken"), token.AccessToken)
+
+		if token.RefreshToken != "" {
+			setUserProperty(user, getOAuthTokenPropertyKey(providerType, "refreshToken"), token.RefreshToken)
+		}
+
+		// Also update the legacy fields for backward compatibility
+		user.OriginalToken = token.AccessToken
+		user.OriginalRefreshToken = token.RefreshToken
+	}
+
 	if userInfo.Id != "" {
 		propertyName := fmt.Sprintf("oauth_%s_id", providerType)
 		setUserProperty(user, propertyName, userInfo.Id)
@@ -217,10 +314,23 @@ func SetUserOAuthProperties(organization *Organization, user *User, providerType
 
 	if userInfo.AvatarUrl != "" {
 		propertyName := fmt.Sprintf("oauth_%s_avatarUrl", providerType)
-		setUserProperty(user, propertyName, userInfo.AvatarUrl)
-		if user.Avatar == "" || user.Avatar == organization.DefaultAvatar {
-			user.Avatar = userInfo.AvatarUrl
+
+		if organization.UsePermanentAvatar {
+			err := syncOAuthAvatarToPermanentStorage(organization, user, propertyName, userInfo.AvatarUrl)
+			if err != nil {
+				return false, err
+			}
+		} else {
+			setUserProperty(user, propertyName, userInfo.AvatarUrl)
+			if user.Avatar == "" || user.Avatar == organization.DefaultAvatar {
+				user.Avatar = userInfo.AvatarUrl
+			}
 		}
+	}
+
+	// Apply custom user mapping from provider configuration
+	if len(userMapping) > 0 && userMapping[0] != nil && len(userMapping[0]) > 0 && userInfo.Extra != nil {
+		applyUserMapping(user, userInfo.Extra, userMapping[0])
 	}
 
 	if userInfo.Extra != nil {
@@ -247,6 +357,147 @@ func SetUserOAuthProperties(organization *Organization, user *User, providerType
 	return UpdateUserForAllFields(user.GetId(), user)
 }
 
+// syncOAuthAvatarToPermanentStorage ensures the user's avatar is stored in permanent storage.
+// It checks whether a permanent avatar already exists for the given sourceAvatarURL.
+// If not, it uploads the avatar and retrieves a permanent URL.
+// Finally, it updates the user's avatar fields with the resolved permanent URL.
+func syncOAuthAvatarToPermanentStorage(organization *Organization, user *User, propertyName, sourceAvatarUrl string) error {
+	oldAvatarUrl := getUserProperty(user, propertyName)
+
+	avatarUrl := sourceAvatarUrl
+	permanentAvatarUrl, err := getPermanentAvatarUrl(user.Owner, user.Name, sourceAvatarUrl, false)
+	if err != nil {
+		return err
+	}
+
+	if permanentAvatarUrl != "" {
+		avatarUrl = permanentAvatarUrl
+
+		if oldAvatarUrl != permanentAvatarUrl {
+			avatarUrl, err = getPermanentAvatarUrl(user.Owner, user.Name, sourceAvatarUrl, true)
+			if err != nil {
+				return err
+			}
+			if avatarUrl == "" {
+				avatarUrl = permanentAvatarUrl
+			}
+		}
+	}
+
+	setUserProperty(user, propertyName, avatarUrl)
+
+	if user.Avatar == "" ||
+		user.Avatar == organization.DefaultAvatar ||
+		user.Avatar == sourceAvatarUrl ||
+		(oldAvatarUrl != "" && user.Avatar == oldAvatarUrl) {
+		user.Avatar = avatarUrl
+	}
+
+	return nil
+}
+
+func applyUserMapping(user *User, extraClaims map[string]string, userMapping map[string]string) {
+	// Map of user fields that can be set from IDP claims
+	for userField, claimName := range userMapping {
+		// Skip standard fields that are already handled
+		if userField == "id" || userField == "username" || userField == "displayName" || userField == "email" || userField == "avatarUrl" {
+			continue
+		}
+
+		// Get value from extra claims
+		claimValue, exists := extraClaims[claimName]
+		if !exists || claimValue == "" {
+			continue
+		}
+
+		// Map to user fields based on field name
+		switch strings.ToLower(userField) {
+		case "phone":
+			if user.Phone == "" {
+				user.Phone = claimValue
+			}
+		case "countrycode":
+			if user.CountryCode == "" {
+				user.CountryCode = claimValue
+			}
+		case "firstname":
+			if user.FirstName == "" {
+				user.FirstName = claimValue
+			}
+		case "lastname":
+			if user.LastName == "" {
+				user.LastName = claimValue
+			}
+		case "region":
+			if user.Region == "" {
+				user.Region = claimValue
+			}
+		case "location":
+			if user.Location == "" {
+				user.Location = claimValue
+			}
+		case "affiliation":
+			if user.Affiliation == "" {
+				user.Affiliation = claimValue
+			}
+		case "title":
+			if user.Title == "" {
+				user.Title = claimValue
+			}
+		case "homepage":
+			if user.Homepage == "" {
+				user.Homepage = claimValue
+			}
+		case "bio":
+			if user.Bio == "" {
+				user.Bio = claimValue
+			}
+		case "tag":
+			if user.Tag == "" {
+				user.Tag = claimValue
+			}
+		case "language":
+			if user.Language == "" {
+				user.Language = claimValue
+			}
+		case "gender":
+			if user.Gender == "" {
+				user.Gender = claimValue
+			}
+		case "birthday":
+			if user.Birthday == "" {
+				user.Birthday = claimValue
+			}
+		case "education":
+			if user.Education == "" {
+				user.Education = claimValue
+			}
+		case "idcard":
+			if user.IdCard == "" {
+				user.IdCard = claimValue
+			}
+		case "idcardtype":
+			if user.IdCardType == "" {
+				user.IdCardType = claimValue
+			}
+		}
+	}
+}
+
+func getUserRoleNames(user *User) (res []string) {
+	for _, role := range user.Roles {
+		res = append(res, role.Name)
+	}
+	return res
+}
+
+func getUserPermissionNames(user *User) (res []string) {
+	for _, permission := range user.Permissions {
+		res = append(res, permission.Name)
+	}
+	return res
+}
+
 func ClearUserOAuthProperties(user *User, providerType string) (bool, error) {
 	for k := range user.Properties {
 		prefix := fmt.Sprintf("oauth_%s_", providerType)
@@ -265,7 +516,7 @@ func ClearUserOAuthProperties(user *User, providerType string) (bool, error) {
 
 func userVisible(isAdmin bool, item *AccountItem) bool {
 	if item == nil {
-		return false
+		return true
 	}
 
 	if item.ViewRule == "Admin" && !isAdmin {
@@ -424,10 +675,11 @@ func CheckPermissionForUpdateUser(oldUser, newUser *User, isAdmin bool, allowDis
 			itemsChanged = append(itemsChanged, item)
 		}
 	}
-	if oldUser.SignupApplication != newUser.SignupApplication {
-		item := GetAccountItemByName("Signup application", organization)
+
+	if oldUser.Language != newUser.Language {
+		item := GetAccountItemByName("Language", organization)
 		if !userVisible(isAdmin, item) {
-			newUser.SignupApplication = oldUser.SignupApplication
+			newUser.Language = oldUser.Language
 		} else {
 			itemsChanged = append(itemsChanged, item)
 		}
@@ -455,6 +707,83 @@ func CheckPermissionForUpdateUser(oldUser, newUser *User, isAdmin bool, allowDis
 		item := GetAccountItemByName("Education", organization)
 		if !userVisible(isAdmin, item) {
 			newUser.Education = oldUser.Education
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.Balance != newUser.Balance {
+		item := GetAccountItemByName("Balance", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.Balance = oldUser.Balance
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.BalanceCredit != newUser.BalanceCredit {
+		item := GetAccountItemByName("Balance credit", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.BalanceCredit = oldUser.BalanceCredit
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.BalanceCurrency != newUser.BalanceCurrency {
+		item := GetAccountItemByName("Balance currency", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.BalanceCurrency = oldUser.BalanceCurrency
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	oldUserCartJson, _ := json.Marshal(oldUser.Cart)
+	if newUser.Cart == nil {
+		newUser.Cart = []ProductInfo{}
+	}
+	newUserCartJson, _ := json.Marshal(newUser.Cart)
+	if string(oldUserCartJson) != string(newUserCartJson) {
+		item := GetAccountItemByName("Cart", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.Cart = oldUser.Cart
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.Score != newUser.Score {
+		item := GetAccountItemByName("Score", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.Score = oldUser.Score
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.Karma != newUser.Karma {
+		item := GetAccountItemByName("Karma", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.Karma = oldUser.Karma
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.Ranking != newUser.Ranking {
+		item := GetAccountItemByName("Ranking", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.Ranking = oldUser.Ranking
+		} else {
+			itemsChanged = append(itemsChanged, item)
+		}
+	}
+
+	if oldUser.SignupApplication != newUser.SignupApplication {
+		item := GetAccountItemByName("Signup application", organization)
+		if !userVisible(isAdmin, item) {
+			newUser.SignupApplication = oldUser.SignupApplication
 		} else {
 			itemsChanged = append(itemsChanged, item)
 		}
@@ -588,51 +917,6 @@ func CheckPermissionForUpdateUser(oldUser, newUser *User, isAdmin bool, allowDis
 		}
 	}
 
-	if oldUser.Balance != newUser.Balance {
-		item := GetAccountItemByName("Balance", organization)
-		if !userVisible(isAdmin, item) {
-			newUser.Balance = oldUser.Balance
-		} else {
-			itemsChanged = append(itemsChanged, item)
-		}
-	}
-
-	if oldUser.Score != newUser.Score {
-		item := GetAccountItemByName("Score", organization)
-		if !userVisible(isAdmin, item) {
-			newUser.Score = oldUser.Score
-		} else {
-			itemsChanged = append(itemsChanged, item)
-		}
-	}
-
-	if oldUser.Karma != newUser.Karma {
-		item := GetAccountItemByName("Karma", organization)
-		if !userVisible(isAdmin, item) {
-			newUser.Karma = oldUser.Karma
-		} else {
-			itemsChanged = append(itemsChanged, item)
-		}
-	}
-
-	if oldUser.Language != newUser.Language {
-		item := GetAccountItemByName("Language", organization)
-		if !userVisible(isAdmin, item) {
-			newUser.Language = oldUser.Language
-		} else {
-			itemsChanged = append(itemsChanged, item)
-		}
-	}
-
-	if oldUser.Ranking != newUser.Ranking {
-		item := GetAccountItemByName("Ranking", organization)
-		if !userVisible(isAdmin, item) {
-			newUser.Ranking = oldUser.Ranking
-		} else {
-			itemsChanged = append(itemsChanged, item)
-		}
-	}
-
 	if oldUser.Currency != newUser.Currency {
 		item := GetAccountItemByName("Currency", organization)
 		if !userVisible(isAdmin, item) {
@@ -652,6 +936,11 @@ func CheckPermissionForUpdateUser(oldUser, newUser *User, isAdmin bool, allowDis
 	}
 
 	for _, accountItem := range itemsChanged {
+		// Skip nil items - these occur when a field doesn't have a corresponding
+		// account item configuration, meaning no validation rules apply
+		if accountItem == nil {
+			continue
+		}
 
 		if pass, err := CheckAccountItemModifyRule(accountItem, isAdmin, lang); !pass {
 			return pass, err
@@ -706,7 +995,7 @@ func (user *User) IsAdminUser() bool {
 }
 
 func IsAppUser(userId string) bool {
-	if strings.HasPrefix(userId, "app/") {
+	if strings.HasPrefix(userId, "app/") || strings.HasPrefix(userId, "app-dcr/") {
 		return true
 	}
 	return false
@@ -722,6 +1011,19 @@ func setReflectAttr[T any](fieldValue *reflect.Value, fieldString string) error 
 	fvElem := fieldValue
 	fvElem.Set(reflect.ValueOf(*unmarshalValue))
 	return nil
+}
+
+func setEmptyReflectAttr(fieldValue *reflect.Value) bool {
+	switch fieldValue.Kind() {
+	case reflect.Slice:
+		fieldValue.Set(reflect.MakeSlice(fieldValue.Type(), 0, 0))
+	case reflect.Map:
+		fieldValue.Set(reflect.MakeMap(fieldValue.Type()))
+	default:
+		return false
+	}
+
+	return true
 }
 
 func StringArrayToStruct[T any](stringArray [][]string) ([]*T, error) {
@@ -749,14 +1051,11 @@ func StringArrayToStruct[T any](stringArray [][]string) ([]*T, error) {
 	instances := []*T{}
 	var err error
 
-	for _, m := range excelMap {
+	for idx, m := range excelMap {
 		instance := new(T)
 		reflectedInstance := reflect.ValueOf(instance).Elem()
 
 		for k, v := range m {
-			if v == "" || v == "null" || v == "[]" || v == "{}" {
-				continue
-			}
 			fName := strings.ToLower(strings.ReplaceAll(k, "_", ""))
 			fieldIdx, ok := structFieldMap[fName]
 			if !ok {
@@ -764,6 +1063,10 @@ func StringArrayToStruct[T any](stringArray [][]string) ([]*T, error) {
 			}
 			fv := reflectedInstance.Field(fieldIdx)
 			if !fv.IsValid() {
+				continue
+			}
+			if v == "" || v == "null" || v == "[]" || v == "{}" {
+				setEmptyReflectAttr(&fv)
 				continue
 			}
 			switch fv.Kind() {
@@ -776,7 +1079,7 @@ func StringArrayToStruct[T any](stringArray [][]string) ([]*T, error) {
 			case reflect.Int:
 				intVal, err := strconv.Atoi(v)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("line %d - column %s: %s", idx+1, fName, err.Error())
 				}
 				fv.SetInt(int64(intVal))
 				continue
@@ -801,14 +1104,88 @@ func StringArrayToStruct[T any](stringArray [][]string) ([]*T, error) {
 				err = setReflectAttr[[]MfaAccount](&fv, v)
 			case reflect.TypeOf([]webauthn.Credential{}):
 				err = setReflectAttr[[]webauthn.Credential](&fv, v)
+			case reflect.TypeOf(map[string]string{}):
+				err = setReflectAttr[map[string]string](&fv, v)
 			}
 
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("line %d: %s", idx, err.Error())
 			}
 		}
 		instances = append(instances, instance)
 	}
 
 	return instances, nil
+}
+
+func replaceAttributeValue(user *User, value string) []string {
+	if user == nil {
+		return nil
+	}
+	valueList := []string{value}
+	if strings.Contains(value, "$user.roles") {
+		valueList = replaceAttributeValuesWithList("$user.roles", getUserRoleNames(user), valueList)
+	}
+
+	if strings.Contains(value, "$user.permissions") {
+		valueList = replaceAttributeValuesWithList("$user.permissions", getUserPermissionNames(user), valueList)
+	}
+
+	if strings.Contains(value, "$user.groups") {
+		valueList = replaceAttributeValuesWithList("$user.groups", user.Groups, valueList)
+	}
+
+	valueList = replaceAttributeValues("$user.owner", user.Owner, valueList)
+	valueList = replaceAttributeValues("$user.name", user.Name, valueList)
+	valueList = replaceAttributeValues("$user.email", user.Email, valueList)
+	valueList = replaceAttributeValues("$user.id", user.Id, valueList)
+	valueList = replaceAttributeValues("$user.phone", user.Phone, valueList)
+
+	return valueList
+}
+
+func replaceAttributeValues(val string, replaceVal string, values []string) []string {
+	var newValues []string
+	for _, value := range values {
+		newValues = append(newValues, strings.ReplaceAll(value, val, replaceVal))
+	}
+
+	return newValues
+}
+
+func replaceAttributeValuesWithList(val string, replaceVals []string, values []string) []string {
+	var newValues []string
+	for _, value := range values {
+		for _, rVal := range replaceVals {
+			newValues = append(newValues, strings.ReplaceAll(value, val, rVal))
+		}
+	}
+
+	return newValues
+}
+
+// TriggerWebhookForUser triggers a webhook for user operations (add, update, delete)
+// action: the action type, e.g., "new-user", "update-user", "delete-user"
+// user: the user object
+func TriggerWebhookForUser(action string, user *User) {
+	if user == nil {
+		return
+	}
+
+	record := &Record{
+		Name:         util.GenerateId(),
+		CreatedTime:  util.GetCurrentTime(),
+		Organization: user.Owner,
+		User:         user.Name,
+		Method:       "POST",
+		RequestUri:   "/api/" + action,
+		Action:       action,
+		Object:       util.StructToJson(user),
+		StatusCode:   200,
+		IsTriggered:  false,
+	}
+
+	util.SafeGoroutine(func() {
+		AddRecord(record)
+	})
 }

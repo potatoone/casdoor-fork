@@ -17,13 +17,14 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/casdoor/casdoor/object"
 )
 
 func (c *ApiController) GetSamlMeta() {
 	host := c.Ctx.Request.Host
-	paramApp := c.Input().Get("application")
+	paramApp := c.Ctx.Input.Query("application")
 	application, err := object.GetApplication(paramApp)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -57,10 +58,13 @@ func (c *ApiController) HandleSamlRedirect() {
 	owner := c.Ctx.Input.Param(":owner")
 	application := c.Ctx.Input.Param(":application")
 
-	relayState := c.Input().Get("RelayState")
-	samlRequest := c.Input().Get("SAMLRequest")
+	relayState := c.Ctx.Input.Query("RelayState")
+	samlRequest := c.Ctx.Input.Query("SAMLRequest")
+	username := c.Ctx.Input.Query("username")
+	loginHint := c.Ctx.Input.Query("login_hint")
 
-	targetURL := object.GetSamlRedirectAddress(owner, application, relayState, samlRequest, host)
+	relayState = url.QueryEscape(relayState)
+	targetURL := object.GetSamlRedirectAddress(owner, application, relayState, samlRequest, host, username, loginHint)
 
 	c.Redirect(targetURL, http.StatusSeeOther)
 }

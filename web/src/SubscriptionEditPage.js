@@ -14,7 +14,9 @@
 
 import moment from "moment";
 import React from "react";
+import Loading from "./common/Loading";
 import {Button, Card, Col, DatePicker, Input, Row, Select} from "antd";
+import PaginateSelect from "./common/PaginateSelect";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as PricingBackend from "./backend/PricingBackend";
 import * as PlanBackend from "./backend/PlanBackend";
@@ -63,7 +65,6 @@ class SubscriptionEditPage extends React.Component {
           subscription: res.data,
         });
 
-        this.getUsers(this.state.organizationName);
         this.getPricings(this.state.organizationName);
         this.getPlans(this.state.organizationName);
       });
@@ -83,20 +84,6 @@ class SubscriptionEditPage extends React.Component {
       .then((res) => {
         this.setState({
           plans: res.data,
-        });
-      });
-  }
-
-  getUsers(organizationName) {
-    UserBackend.getUsers(organizationName)
-      .then((res) => {
-        if (res.status === "error") {
-          Setting.showMessage("error", res.msg);
-          return;
-        }
-
-        this.setState({
-          users: res.data,
         });
       });
   }
@@ -128,13 +115,16 @@ class SubscriptionEditPage extends React.Component {
   }
 
   renderSubscription() {
+    const isViewMode = this.state.mode === "view";
     return (
       <Card size="small" title={
         <div>
-          {this.state.mode === "add" ? i18next.t("subscription:New Subscription") : i18next.t("subscription:Edit Subscription")}&nbsp;&nbsp;&nbsp;&nbsp;
-          <Button onClick={() => this.submitSubscriptionEdit(false)}>{i18next.t("general:Save")}</Button>
-          <Button style={{marginLeft: "20px"}} type="primary" onClick={() => this.submitSubscriptionEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} onClick={() => this.deleteSubscription()}>{i18next.t("general:Cancel")}</Button> : null}
+          {this.state.mode === "add" ? i18next.t("subscription:New Subscription") : (isViewMode ? i18next.t("subscription:View Subscription") : i18next.t("subscription:Edit Subscription"))}&nbsp;&nbsp;&nbsp;&nbsp;
+          {!isViewMode && (<>
+            <Button onClick={() => this.submitSubscriptionEdit(false)}>{i18next.t("general:Save")}</Button>
+            <Button style={{marginLeft: "20px"}} type="primary" onClick={() => this.submitSubscriptionEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
+            {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} onClick={() => this.deleteSubscription()}>{i18next.t("general:Cancel")}</Button> : null}
+          </>)}
         </div>
       } style={(Setting.isMobile()) ? {margin: "5px"} : {}} type="inner">
         <Row style={{marginTop: "10px"}} >
@@ -142,9 +132,8 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:Organization"), i18next.t("general:Organization - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select virtual={false} style={{width: "100%"}} value={this.state.subscription.owner} onChange={(owner => {
+            <Select virtual={false} style={{width: "100%"}} value={this.state.subscription.owner} disabled={isViewMode} onChange={(owner => {
               this.updateSubscriptionField("owner", owner);
-              this.getUsers(owner);
               this.getPlans(owner);
             })}
             options={this.state.organizations.map((organization) => Setting.getOption(organization.name, organization.name))
@@ -156,7 +145,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:Name"), i18next.t("general:Name - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Input value={this.state.subscription.name} onChange={e => {
+            <Input value={this.state.subscription.name} disabled={isViewMode} onChange={e => {
               this.updateSubscriptionField("name", e.target.value);
             }} />
           </Col>
@@ -166,7 +155,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:Display name"), i18next.t("general:Display name - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Input value={this.state.subscription.displayName} onChange={e => {
+            <Input value={this.state.subscription.displayName} disabled={isViewMode} onChange={e => {
               this.updateSubscriptionField("displayName", e.target.value);
             }} />
           </Col>
@@ -176,7 +165,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("subscription:Start time"), i18next.t("subscription:Start time - Tooltip"))}
           </Col>
           <Col span={22} >
-            <DatePicker value={dayjs(this.state.subscription.startTime)} onChange={value => {
+            <DatePicker value={dayjs(this.state.subscription.startTime)} disabled={isViewMode} onChange={value => {
               this.updateSubscriptionField("startTime", value);
             }} />
           </Col>
@@ -186,7 +175,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("subscription:End time"), i18next.t("subscription:End time - Tooltip"))}
           </Col>
           <Col span={22} >
-            <DatePicker value={dayjs(this.state.subscription.endTime)} onChange={value => {
+            <DatePicker value={dayjs(this.state.subscription.endTime)} disabled={isViewMode} onChange={value => {
               this.updateSubscriptionField("endTime", value);
             }} />
           </Col>
@@ -198,6 +187,7 @@ class SubscriptionEditPage extends React.Component {
           <Col span={22} >
             <Select
               defaultValue={this.state.subscription.period === "" ? "Monthly" : this.state.subscription.period}
+              disabled={isViewMode}
               onChange={value => {
                 this.updateSubscriptionField("period", value);
               }}
@@ -213,9 +203,21 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:User"), i18next.t("general:User - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select style={{width: "100%"}} value={this.state.subscription.user}
-              onChange={(value => {this.updateSubscriptionField("user", value);})}
-              options={this.state.users.map((user) => Setting.getOption(user.name, user.name))}
+            <PaginateSelect
+              virtual
+              style={{width: "100%"}}
+              value={this.state.subscription.user}
+              disabled={isViewMode}
+              allowClear
+              fetchPage={UserBackend.getUsers}
+              buildFetchArgs={({page, pageSize, searchText}) => {
+                const field = searchText ? "name" : "";
+                return [this.state.subscription.owner, page, pageSize, field, searchText];
+              }}
+              reloadKey={this.state.subscription?.owner}
+              optionMapper={(user) => Setting.getOption(user.name, user.name)}
+              filterOption={false}
+              onChange={(value => {this.updateSubscriptionField("user", value || "");})}
             />
           </Col>
         </Row>
@@ -225,6 +227,7 @@ class SubscriptionEditPage extends React.Component {
           </Col>
           <Col span={22} >
             <Select virtual={false} style={{width: "100%"}} value={this.state.subscription.pricing}
+              disabled={isViewMode}
               onChange={(value => {this.updateSubscriptionField("pricing", value);})}
               options={this.state.pricings.map((pricing) => Setting.getOption(pricing.name, pricing.name))
               } />
@@ -236,6 +239,7 @@ class SubscriptionEditPage extends React.Component {
           </Col>
           <Col span={22} >
             <Select virtual={false} style={{width: "100%"}} value={this.state.subscription.plan}
+              disabled={isViewMode}
               onChange={(value => {this.updateSubscriptionField("plan", value);})}
               options={this.state.plans.map((plan) => Setting.getOption(plan.name, plan.name))
               } />
@@ -256,7 +260,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:Description"), i18next.t("general:Description - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Input value={this.state.subscription.description} onChange={e => {
+            <Input value={this.state.subscription.description} disabled={isViewMode} onChange={e => {
               this.updateSubscriptionField("description", e.target.value);
             }} />
           </Col>
@@ -266,7 +270,7 @@ class SubscriptionEditPage extends React.Component {
             {Setting.getLabel(i18next.t("general:State"), i18next.t("general:State - Tooltip"))} :
           </Col>
           <Col span={22} >
-            <Select virtual={false} disabled={!Setting.isLocalAdminUser(this.props.account)} style={{width: "100%"}} value={this.state.subscription.state} onChange={(value => {
+            <Select virtual={false} disabled={isViewMode || !Setting.isLocalAdminUser(this.props.account)} style={{width: "100%"}} value={this.state.subscription.state} onChange={(value => {
               if (this.state.subscription.state !== value) {
                 if (value === "Approved") {
                   this.updateSubscriptionField("approver", this.props.account.name);
@@ -280,11 +284,11 @@ class SubscriptionEditPage extends React.Component {
               this.updateSubscriptionField("state", value);
             })}
             options={[
-              {value: "Pending", name: i18next.t("subscription:Pending")},
+              {value: "Pending", name: i18next.t("webhook:Pending")},
               {value: "Active", name: i18next.t("subscription:Active")},
               {value: "Upcoming", name: i18next.t("subscription:Upcoming")},
               {value: "Expired", name: i18next.t("subscription:Expired")},
-              {value: "Error", name: i18next.t("subscription:Error")},
+              {value: "Error", name: i18next.t("general:Error")},
               {value: "Suspended", name: i18next.t("subscription:Suspended")},
             ].map((item) => Setting.getOption(item.name, item.value))}
             />
@@ -337,13 +341,15 @@ class SubscriptionEditPage extends React.Component {
     return (
       <div>
         {
-          this.state.subscription !== null ? this.renderSubscription() : null
+          this.state.subscription !== null ? this.renderSubscription() : <Loading type="page" tip={i18next.t("login:Loading")} />
         }
-        <div style={{marginTop: "20px", marginLeft: "40px"}}>
-          <Button size="large" onClick={() => this.submitSubscriptionEdit(false)}>{i18next.t("general:Save")}</Button>
-          <Button style={{marginLeft: "20px"}} type="primary" size="large" onClick={() => this.submitSubscriptionEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} size="large" onClick={() => this.deleteSubscription()}>{i18next.t("general:Cancel")}</Button> : null}
-        </div>
+        {this.state.mode !== "view" && (
+          <div style={{marginTop: "20px", marginLeft: "40px"}}>
+            <Button size="large" onClick={() => this.submitSubscriptionEdit(false)}>{i18next.t("general:Save")}</Button>
+            <Button style={{marginLeft: "20px"}} type="primary" size="large" onClick={() => this.submitSubscriptionEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
+            {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} size="large" onClick={() => this.deleteSubscription()}>{i18next.t("general:Cancel")}</Button> : null}
+          </div>
+        )}
       </div>
     );
   }

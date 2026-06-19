@@ -25,6 +25,7 @@ import {ArrowLeftOutlined, CheckCircleOutlined, KeyOutlined, LockOutlined, Solut
 import CustomGithubCorner from "../common/CustomGithubCorner";
 import {withRouter} from "react-router-dom";
 import * as PasswordChecker from "../common/PasswordChecker";
+import * as Obfuscator from "./Obfuscator";
 
 const {Option} = Select;
 
@@ -93,7 +94,7 @@ class ForgetPage extends React.Component {
             const email = res.data.email;
 
             if (!phone && !email) {
-              Setting.showMessage("error", "no verification method!");
+              Setting.showMessage("error", i18next.t("general:No verification method"));
             } else {
               this.setState({
                 name: res.data.name,
@@ -171,7 +172,24 @@ class ForgetPage extends React.Component {
       }
     }
 
-    UserBackend.setPassword(values.userOwner, values.username, "", values?.newPassword, this.state.code).then(res => {
+    // Encrypt password using password obfuscator if configured
+    let encryptedNewPassword = values?.newPassword;
+    const organization = this.getApplicationObj()?.organizationObj;
+
+    if (organization?.passwordObfuscatorType && organization.passwordObfuscatorType !== "Plain") {
+      const [passwordCipher, errorMessage] = Obfuscator.encryptByPasswordObfuscator(
+        organization.passwordObfuscatorType,
+        organization.passwordObfuscatorKey,
+        values?.newPassword
+      );
+      if (errorMessage.length > 0) {
+        Setting.showMessage("error", errorMessage);
+        return;
+      }
+      encryptedNewPassword = passwordCipher;
+    }
+
+    UserBackend.setPassword(values.userOwner, values.username, "", encryptedNewPassword, this.state.code).then(res => {
       if (res.status === "ok") {
         const linkInStorage = sessionStorage.getItem("signinUrl");
         if (linkInStorage !== null && linkInStorage !== "") {
@@ -470,7 +488,7 @@ class ForgetPage extends React.Component {
             >
               <Input.Password
                 prefix={<CheckCircleOutlined />}
-                placeholder={i18next.t("signup:Confirm")}
+                placeholder={i18next.t("general:Confirm")}
               />
             </Form.Item>
             <br />
@@ -509,8 +527,8 @@ class ForgetPage extends React.Component {
       <React.Fragment>
         <CustomGithubCorner />
         <div className="forget-content" style={{padding: Setting.isMobile() ? "0" : null, boxShadow: Setting.isMobile() ? "none" : null}}>
-          {Setting.inIframe() || Setting.isMobile() ? null : <div dangerouslySetInnerHTML={{__html: application.formCss}} />}
-          {Setting.inIframe() || !Setting.isMobile() ? null : <div dangerouslySetInnerHTML={{__html: application.formCssMobile}} />}
+          {Setting.inIframe() || Setting.isMobile() ? null : <style dangerouslySetInnerHTML={{__html: Setting.getStyleInnerCss(application.formCss)}} />}
+          {Setting.inIframe() || !Setting.isMobile() ? null : <style dangerouslySetInnerHTML={{__html: Setting.getStyleInnerCss(application.formCssMobile)}} />}
           <Button type="text"
             style={{position: "relative", left: Setting.isMobile() ? "10px" : "-90px", top: 0}}
             icon={<ArrowLeftOutlined style={{fontSize: "24px"}} />}
@@ -544,7 +562,7 @@ class ForgetPage extends React.Component {
                     current={this.state.current}
                     items={[
                       {
-                        title: i18next.t("forget:Account"),
+                        title: i18next.t("cert:Account"),
                         icon: <UserOutlined />,
                       },
                       {

@@ -19,6 +19,8 @@ import Highlighter from "react-highlight-words";
 import i18next from "i18next";
 import * as Setting from "./Setting";
 import * as TourConfig from "./TourConfig";
+import * as FormBackend from "./backend/FormBackend";
+import Loading from "./common/Loading";
 
 class BaseListPage extends React.Component {
   constructor(props) {
@@ -26,7 +28,7 @@ class BaseListPage extends React.Component {
     this.state = {
       classes: props,
       organizationName: this.props.match?.params.organizationName || Setting.getRequestOrganization(this.props.account),
-      data: [],
+      data: null,
       pagination: {
         current: 1,
         pageSize: 10,
@@ -36,16 +38,18 @@ class BaseListPage extends React.Component {
       searchedColumn: "",
       isAuthorized: true,
       isTourVisible: TourConfig.getTourVisible(),
+      formItems: [],
     };
   }
 
   handleOrganizationChange = () => {
     this.setState({
       organizationName: this.props.match?.params.organizationName || Setting.getRequestOrganization(this.props.account),
+    },
+    () => {
+      const {pagination} = this.state;
+      this.fetch({pagination});
     });
-
-    const {pagination} = this.state;
-    this.fetch({pagination});
   };
 
   handleTourChange = () => {
@@ -71,6 +75,37 @@ class BaseListPage extends React.Component {
   UNSAFE_componentWillMount() {
     const {pagination} = this.state;
     this.fetch({pagination});
+    this.getForm();
+  }
+
+  getForm() {
+    const tag = this.props.account.tag;
+    const formType = this.props.match?.path?.replace(/^\//, "");
+    let formName = formType;
+    if (tag !== "") {
+      formName = formType + "-tag-" + tag;
+      FormBackend.getForm(this.props.account.owner, formName)
+        .then(res => {
+          if (res.status === "ok" && res.data) {
+            this.setState({formItems: res.data.formItems});
+          } else {
+            this.fetchFormWithoutTag(formType);
+          }
+        });
+    } else {
+      this.fetchFormWithoutTag(formType);
+    }
+  }
+
+  fetchFormWithoutTag(formName) {
+    FormBackend.getForm(this.props.account.owner, formName)
+      .then(res => {
+        if (res.status === "ok" && res.data) {
+          this.setState({formItems: res.data.formItems});
+        } else {
+          this.setState({formItems: []});
+        }
+      });
   }
 
   getColumnSearchProps = (dataIndex, customRender = null) => ({
@@ -80,7 +115,7 @@ class BaseListPage extends React.Component {
           ref={node => {
             this.searchInput = node;
           }}
-          placeholder={`Search ${dataIndex}`}
+          placeholder={i18next.t("general:Please input your search")}
           value={selectedKeys[0]}
           onChange={e => setSelectedKeys(e.target.value ? [e.target.value] : [])}
           onPressEnter={() => this.handleSearch(selectedKeys, confirm, dataIndex)}
@@ -95,10 +130,10 @@ class BaseListPage extends React.Component {
             size="small"
             style={{width: 90}}
           >
-                        Search
+            {i18next.t("general:Search")}
           </Button>
           <Button onClick={() => this.handleReset(clearFilters)} size="small" style={{width: 90}}>
-                        Reset
+            {i18next.t("forget:Reset")}
           </Button>
           <Button
             type="link"
@@ -111,7 +146,7 @@ class BaseListPage extends React.Component {
               });
             }}
           >
-                        Filter
+            {i18next.t("general:Filter")}
           </Button>
         </Space>
       </div>
@@ -165,6 +200,10 @@ class BaseListPage extends React.Component {
     });
   };
 
+  getTableLoading = () => {
+    return this.state.loading ? {tip: i18next.t("login:Loading")} : false;
+  };
+
   setIsTourVisible = () => {
     TourConfig.setIsTourVisible(false);
     this.setState({isTourVisible: false});
@@ -206,6 +245,10 @@ class BaseListPage extends React.Component {
           extra={<a href="/"><Button type="primary">{i18next.t("general:Back Home")}</Button></a>}
         />
       );
+    }
+
+    if (this.state.loading && this.state.data === null) {
+      return <Loading type="page" tip={i18next.t("login:Loading")} />;
     }
 
     return (

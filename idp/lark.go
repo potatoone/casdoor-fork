@@ -83,8 +83,6 @@ type LarkAccessToken struct {
 	Expire            int    `json:"expire"`
 }
 
-// GetToken use code get access_token (*operation of getting code ought to be done in front)
-// get more detail via: https://docs.microsoft.com/en-us/linkedIn/shared/authentication/authorization-code-flow?context=linkedIn%2Fcontext&tabs=HTTPS
 func (idp *LarkIdProvider) GetToken(code string) (*oauth2.Token, error) {
 	params := &struct {
 		AppID     string `json:"app_id"`
@@ -135,6 +133,7 @@ func (idp *LarkIdProvider) GetToken(code string) (*oauth2.Token, error) {
         "open_id": "ou-caecc734c2e3328a62489fe0648c4b98779515d3",
         "union_id": "on-d89jhsdhjsajkda7828enjdj328ydhhw3u43yjhdj",
         "email": "zhangsan@feishu.cn",
+        "enterprise_email": "zhangsan@company.com",
         "user_id": "5d9bdxxx",
         "mobile": "+86130002883xx",
         "tenant_key": "736588c92lxf175d",
@@ -160,6 +159,7 @@ type LarkUserInfo struct {
 		OpenId           string `json:"open_id"`
 		UnionId          string `json:"union_id"`
 		Email            string `json:"email"`
+		EnterpriseEmail  string `json:"enterprise_email"`
 		UserId           string `json:"user_id"`
 		Mobile           string `json:"mobile"`
 		TenantKey        string `json:"tenant_key"`
@@ -168,9 +168,6 @@ type LarkUserInfo struct {
 	} `json:"data"`
 }
 
-// GetUserInfo use LarkAccessToken gotten before return LinkedInUserInf
-// GetUserInfo use LarkAccessToken gotten before return LinkedInUserInfo
-// get more detail via: https://docs.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin?context=linkedin/consumer/context
 func (idp *LarkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, error) {
 	body := &struct {
 		GrantType string `json:"grant_type"`
@@ -207,6 +204,21 @@ func (idp *LarkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, error) {
 		return nil, err
 	}
 
+	// Use enterprise_email as fallback when email is empty
+	email := larkUserInfo.Data.Email
+	if email == "" {
+		email = larkUserInfo.Data.EnterpriseEmail
+	}
+
+	// Use fallback mechanism for username: UserId -> UnionId -> OpenId
+	username := larkUserInfo.Data.UserId
+	if username == "" {
+		username = larkUserInfo.Data.UnionId
+	}
+	if username == "" {
+		username = larkUserInfo.Data.OpenId
+	}
+
 	var phoneNumber string
 	var countryCode string
 	if len(larkUserInfo.Data.Mobile) != 0 {
@@ -221,8 +233,8 @@ func (idp *LarkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, error) {
 	userInfo := UserInfo{
 		Id:          larkUserInfo.Data.OpenId,
 		DisplayName: larkUserInfo.Data.Name,
-		Username:    larkUserInfo.Data.UserId,
-		Email:       larkUserInfo.Data.Email,
+		Username:    username,
+		Email:       email,
 		AvatarUrl:   larkUserInfo.Data.AvatarUrl,
 		Phone:       phoneNumber,
 		CountryCode: countryCode,

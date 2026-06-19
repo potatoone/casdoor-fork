@@ -13,11 +13,14 @@
 // limitations under the License.
 
 import React from "react";
-import {Button, Card, Col, Input, InputNumber, Row, Select} from "antd";
+import Loading from "./common/Loading";
+import {Button, Card, Col, Input, InputNumber, Modal, Row, Select, Table} from "antd";
+import {CopyOutlined} from "@ant-design/icons";
 import * as InvitationBackend from "./backend/InvitationBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as ApplicationBackend from "./backend/ApplicationBackend";
 import * as Setting from "./Setting";
+import * as Conf from "./Conf";
 import i18next from "i18next";
 import copy from "copy-to-clipboard";
 import * as GroupBackend from "./backend/GroupBackend";
@@ -36,6 +39,7 @@ class InvitationEditPage extends React.Component {
       applications: [],
       groups: [],
       mode: props.location.mode !== undefined ? props.location.mode : "edit",
+      sendLoading: false,
     };
   }
 
@@ -109,7 +113,7 @@ class InvitationEditPage extends React.Component {
   copySignupLink() {
     let defaultApplication;
     if (this.state.invitation.owner === "built-in") {
-      defaultApplication = "app-built-in";
+      defaultApplication = Conf.DefaultApplication;
     } else {
       const selectedOrganization = Setting.getArrayItem(this.state.organizations, "name", this.state.invitation.owner);
       defaultApplication = selectedOrganization.defaultApplication;
@@ -122,6 +126,39 @@ class InvitationEditPage extends React.Component {
     Setting.showMessage("success", i18next.t("general:Copied to clipboard successfully"));
   }
 
+  renderSendEmailModal() {
+    const emailColumns = [
+      {title: "email", dataIndex: "email"},
+    ];
+    const emails = this.state.emails?.split("\n")?.filter(email => Setting.isValidEmail(email));
+    const emailData = emails?.map((email) => {return {email: email};});
+
+    return <Modal title={i18next.t("general:Send")}
+      style={{height: "800px"}}
+      open={this.state.showSendModal}
+      closable
+      footer={[
+        <Button key={1} loading={this.state.sendLoading} type="primary"
+          onClick={() => {
+            this.setState({sendLoading: true});
+            InvitationBackend.sendInvitation(this.state.invitation, emails).then((res) => {
+              this.setState({sendLoading: false});
+              if (res.status === "error") {
+                Setting.showMessage("error", res.msg);
+                return;
+              }
+              Setting.showMessage("success", i18next.t("general:Successfully sent"));
+            }).catch(err => Setting.showMessage("error", err.message));
+          }}>{i18next.t("general:Send")}</Button>,
+      ]}
+      onCancel={() => {this.setState({showSendModal: false});}}>
+      <div >
+        <p>You will send invitation email to:</p>
+        <Table showHeader={false} columns={emailColumns} dataSource={emailData} size={"small"}></Table>
+      </div>
+    </Modal>;
+  }
+
   renderInvitation() {
     const isCreatedByPlan = this.state.invitation.tag === "auto_created_invitation_for_plan";
     return (
@@ -130,9 +167,6 @@ class InvitationEditPage extends React.Component {
           {this.state.mode === "add" ? i18next.t("invitation:New Invitation") : i18next.t("invitation:Edit Invitation")}&nbsp;&nbsp;&nbsp;&nbsp;
           <Button onClick={() => this.submitInvitationEdit(false)}>{i18next.t("general:Save")}</Button>
           <Button style={{marginLeft: "20px"}} type="primary" onClick={() => this.submitInvitationEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          <Button style={{marginLeft: "20px"}} onClick={_ => this.copySignupLink()}>
-            {i18next.t("application:Copy signup page URL")}
-          </Button>
           {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} onClick={() => this.deleteInvitation()}>{i18next.t("general:Cancel")}</Button> : null}
         </div>
       } style={(Setting.isMobile()) ? {margin: "5px"} : {}} type="inner">
@@ -190,6 +224,26 @@ class InvitationEditPage extends React.Component {
             <Input value={this.state.invitation.defaultCode} onChange={e => {
               this.updateInvitationField("defaultCode", e.target.value);
             }} />
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+          </Col>
+          <Col span={22} >
+            <Button style={{marginBottom: "10px"}} type="primary" shape="round" icon={<CopyOutlined />} onClick={_ => this.copySignupLink()}>
+              {i18next.t("application:Copy signup page URL")}
+            </Button>
+          </Col>
+        </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {i18next.t("general:Send")}
+          </Col>
+          <Col span={22} >
+            <Input.TextArea autoSize={{minRows: 3, maxRows: 10}} value={this.state.emails} onChange={(value) => {
+              this.setState({emails: value.target.value});
+            }}></Input.TextArea>
+            <Button type="primary" style={{marginTop: "20px"}} onClick={() => this.setState({showSendModal: true})}>{i18next.t("general:Send")}</Button>
           </Col>
         </Row>
         <Row style={{marginTop: "20px"}} >
@@ -331,15 +385,13 @@ class InvitationEditPage extends React.Component {
   render() {
     return (
       <div>
+        {this.state.showSendModal ? this.renderSendEmailModal() : null}
         {
-          this.state.invitation !== null ? this.renderInvitation() : null
+          this.state.invitation !== null ? this.renderInvitation() : <Loading type="page" tip={i18next.t("login:Loading")} />
         }
         <div style={{marginTop: "20px", marginLeft: "40px"}}>
           <Button size="large" onClick={() => this.submitInvitationEdit(false)}>{i18next.t("general:Save")}</Button>
           <Button style={{marginLeft: "20px"}} type="primary" size="large" onClick={() => this.submitInvitationEdit(true)}>{i18next.t("general:Save & Exit")}</Button>
-          <Button style={{marginLeft: "20px"}} size="large" onClick={_ => this.copySignupLink()}>
-            {i18next.t("application:Copy signup page URL")}
-          </Button>
           {this.state.mode === "add" ? <Button style={{marginLeft: "20px"}} size="large" onClick={() => this.deleteInvitation()}>{i18next.t("general:Cancel")}</Button> : null}
         </div>
       </div>

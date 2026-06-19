@@ -49,7 +49,7 @@ type Permission struct {
 	State       string `xorm:"varchar(100)" json:"state"`
 }
 
-const builtInAvailableField = 5 // Casdoor built-in adapter, use V5 to filter permission, so has 5 available field
+const builtInMaxFields = 6 // Casdoor built-in adapter, use V5 to filter permission, so has 6 max field
 
 func GetPermissionCount(owner, field, value string) (int64, error) {
 	session := GetSession(owner, -1, -1, field, value, "", "")
@@ -120,18 +120,6 @@ func checkPermissionValid(permission *Permission) error {
 		return nil
 	}
 
-	groupingPolicies, err := getGroupingPolicies(permission)
-	if err != nil {
-		return err
-	}
-
-	if len(groupingPolicies) > 0 {
-		_, err = enforcer.AddGroupingPolicies(groupingPolicies)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -148,7 +136,7 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 	}
 
 	if permission.ResourceType == "Application" && permission.Model != "" {
-		model, err := GetModelEx(util.GetId(permission.Owner, permission.Model))
+		model, err := getModelEx(permission.Model)
 		if err != nil {
 			return false, err
 		} else if model == nil {
@@ -171,11 +159,6 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 	}
 
 	if affected != 0 {
-		err = removeGroupingPolicies(oldPermission)
-		if err != nil {
-			return false, err
-		}
-
 		err = removePolicies(oldPermission)
 		if err != nil {
 			return false, err
@@ -190,11 +173,6 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 		// 		}
 		// 	}
 		// }
-
-		err = addGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
 
 		err = addPolicies(permission)
 		if err != nil {
@@ -212,11 +190,6 @@ func AddPermission(permission *Permission) (bool, error) {
 	}
 
 	if affected != 0 {
-		err = addGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
-
 		err = addPolicies(permission)
 		if err != nil {
 			return false, err
@@ -241,11 +214,6 @@ func AddPermissions(permissions []*Permission) (bool, error) {
 	for _, permission := range permissions {
 		// add using for loop
 		if affected != 0 {
-			err = addGroupingPolicies(permission)
-			if err != nil {
-				return false, err
-			}
-
 			err = addPolicies(permission)
 			if err != nil {
 				return false, err
@@ -302,11 +270,6 @@ func DeletePermission(permission *Permission) (bool, error) {
 	}
 
 	if affected {
-		err = removeGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
-
 		err = removePolicies(permission)
 		if err != nil {
 			return false, err
@@ -336,6 +299,23 @@ func getPermissionsByUser(userId string) ([]*Permission, error) {
 	res := []*Permission{}
 	for _, permission := range permissions {
 		if util.InSlice(permission.Users, userId) {
+			res = append(res, permission)
+		}
+	}
+
+	return res, nil
+}
+
+func getPermissionsByGroup(groupId string) ([]*Permission, error) {
+	permissions := []*Permission{}
+	err := ormer.Engine.Where("`groups` like ?", "%"+groupId+"\"%").Find(&permissions)
+	if err != nil {
+		return permissions, err
+	}
+
+	res := []*Permission{}
+	for _, permission := range permissions {
+		if util.InSlice(permission.Groups, groupId) {
 			res = append(res, permission)
 		}
 	}
@@ -390,6 +370,31 @@ func getPermissionsAndRolesByUser(userId string) ([]*Permission, []*Role, error)
 
 		if _, ok := existedPerms[perm.Name]; !ok {
 			existedPerms[perm.Name] = struct{}{}
+		}
+	}
+
+	user, err := GetUser(userId)
+	if err != nil {
+		return nil, nil, err
+	}
+	if user != nil {
+		groupIds := append([]string{}, user.Groups...)
+		if len(user.Groups) > 0 {
+			groupIds = append(groupIds, "*", util.GetId(user.Owner, "*"))
+		}
+
+		for _, groupId := range groupIds {
+			perms, err := getPermissionsByGroup(groupId)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, perm := range perms {
+				perm.Users = nil
+				if _, ok := existedPerms[perm.Name]; !ok {
+					existedPerms[perm.Name] = struct{}{}
+					permissions = append(permissions, perm)
+				}
+			}
 		}
 	}
 
@@ -477,14 +482,38 @@ func (p *Permission) GetModelAndAdapter() string {
 }
 
 func (p *Permission) isUserHit(name string) bool {
-	targetOrg, targetName := util.GetOwnerAndNameFromId(name)
+	targetOrg, targetName, err := util.GetOwnerAndNameFromIdWithError(name)
+	if err != nil {
+		return false
+	}
 	for _, user := range p.Users {
 		if user == "*" {
 			return true
 		}
 
-		userOrg, userName := util.GetOwnerAndNameFromId(user)
+		userOrg, userName, err := util.GetOwnerAndNameFromIdWithError(user)
+		if err != nil {
+			continue
+		}
 		if userOrg == targetOrg && (userName == "*" || userName == targetName) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Permission) isGroupHit(userId string) bool {
+	user, err := GetUser(userId)
+	if err != nil || user == nil {
+		return false
+	}
+
+	for _, group := range p.Groups {
+		if group == "*" || group == util.GetId(p.Owner, "*") {
+			return len(user.Groups) > 0
+		}
+
+		if util.InSlice(user.Groups, group) {
 			return true
 		}
 	}

@@ -15,13 +15,16 @@
 package object
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/big"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/casdoor/casdoor/conf"
@@ -35,7 +38,16 @@ type VerifyResult struct {
 	Msg  string
 }
 
-var ResetLinkReg *regexp.Regexp
+type verifyCodeErrorInfo struct {
+	wrongTimes    int
+	lastWrongTime time.Time
+}
+
+var (
+	ResetLinkReg           *regexp.Regexp
+	verifyCodeErrorMap     = map[string]*verifyCodeErrorInfo{}
+	verifyCodeErrorMapLock sync.Mutex
+)
 
 const (
 	VerificationSuccess = iota
@@ -68,7 +80,7 @@ type VerificationRecord struct {
 	IsUsed     bool   `xorm:"notnull" json:"isUsed"`
 }
 
-func IsAllowSend(user *User, remoteAddr, recordType string) error {
+func IsAllowSend(user *User, remoteAddr, recordType string, application *Application) error {
 	var record VerificationRecord
 	record.RemoteAddr = remoteAddr
 	record.Type = recordType
@@ -81,15 +93,21 @@ func IsAllowSend(user *User, remoteAddr, recordType string) error {
 		return err
 	}
 
+	// Get timeout from application, or use default
+	resendTimeoutInSeconds := int64(60)
+	if application != nil && application.CodeResendTimeout > 0 {
+		resendTimeoutInSeconds = int64(application.CodeResendTimeout)
+	}
+
 	now := time.Now().Unix()
-	if has && now-record.Time < 60 {
-		return errors.New("you can only send one code in 60s")
+	if has && now-record.Time < resendTimeoutInSeconds {
+		return fmt.Errorf("you can only send one code in %ds", resendTimeoutInSeconds)
 	}
 
 	return nil
 }
 
-func SendVerificationCodeToEmail(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string, method string, host string, applicationName string) error {
+func SendVerificationCodeToEmail(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string, method string, host string, applicationName string, application *Application) error {
 	sender := organization.DisplayName
 	title := provider.Title
 
@@ -124,17 +142,17 @@ func SendVerificationCodeToEmail(organization *Organization, user *User, provide
 	}
 	content = strings.Replace(content, "%{user.friendlyName}", userString, 1)
 
-	err := IsAllowSend(user, remoteAddr, provider.Category)
+	err := IsAllowSend(user, remoteAddr, provider.Category, application)
 	if err != nil {
 		return err
 	}
 
-	err = SendEmail(provider, title, content, dest, sender)
+	err = SendEmail(provider, title, content, []string{dest}, sender)
 	if err != nil {
 		return err
 	}
 
-	err = AddToVerificationRecord(user, provider, remoteAddr, provider.Category, dest, code)
+	err = AddToVerificationRecord(user, provider, organization, remoteAddr, provider.Category, dest, code)
 	if err != nil {
 		return err
 	}
@@ -142,8 +160,8 @@ func SendVerificationCodeToEmail(organization *Organization, user *User, provide
 	return nil
 }
 
-func SendVerificationCodeToPhone(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string) error {
-	err := IsAllowSend(user, remoteAddr, provider.Category)
+func SendVerificationCodeToPhone(organization *Organization, user *User, provider *Provider, remoteAddr string, dest string, application *Application) error {
+	err := IsAllowSend(user, remoteAddr, provider.Category, application)
 	if err != nil {
 		return err
 	}
@@ -158,7 +176,7 @@ func SendVerificationCodeToPhone(organization *Organization, user *User, provide
 		return err
 	}
 
-	err = AddToVerificationRecord(user, provider, remoteAddr, provider.Category, dest, code)
+	err = AddToVerificationRecord(user, provider, organization, remoteAddr, provider.Category, dest, code)
 	if err != nil {
 		return err
 	}
@@ -166,14 +184,14 @@ func SendVerificationCodeToPhone(organization *Organization, user *User, provide
 	return nil
 }
 
-func AddToVerificationRecord(user *User, provider *Provider, remoteAddr, recordType, dest, code string) error {
+func AddToVerificationRecord(user *User, provider *Provider, organization *Organization, remoteAddr, recordType, dest, code string) error {
 	var record VerificationRecord
 	record.RemoteAddr = remoteAddr
 	record.Type = recordType
 	if user != nil {
 		record.User = user.GetId()
 	}
-	record.Owner = provider.Owner
+	record.Owner = organization.Name
 	record.Name = util.GenerateId()
 	record.CreatedTime = util.GetCurrentTime()
 
@@ -320,13 +338,114 @@ func CheckSigninCode(user *User, dest, code, lang string) error {
 	case wrongCodeError:
 		return recordSigninErrorInfo(user, lang)
 	default:
-		return fmt.Errorf(result.Msg)
+		return errors.New(result.Msg)
+	}
+}
+
+// getVerifyCodeErrorKey builds the in-memory key for verify-code failed attempt tracking
+func getVerifyCodeErrorKey(user *User, dest string) string {
+	if user == nil {
+		return dest
+	}
+
+	return fmt.Sprintf("%s:%s", user.GetId(), dest)
+}
+
+func checkVerifyCodeErrorTimes(user *User, dest, lang string) error {
+	failedSigninLimit, failedSigninFrozenTime, err := GetFailedSigninConfigByUser(user)
+	if err != nil {
+		return err
+	}
+
+	key := getVerifyCodeErrorKey(user, dest)
+
+	verifyCodeErrorMapLock.Lock()
+	defer verifyCodeErrorMapLock.Unlock()
+
+	errorInfo, ok := verifyCodeErrorMap[key]
+	if !ok || errorInfo == nil {
+		return nil
+	}
+
+	if errorInfo.wrongTimes < failedSigninLimit {
+		return nil
+	}
+
+	minutes := failedSigninFrozenTime - int(time.Now().UTC().Sub(errorInfo.lastWrongTime).Minutes())
+	if minutes > 0 {
+		return fmt.Errorf(i18n.Translate(lang, "check:You have entered the wrong password or code too many times, please wait for %d minutes and try again"), minutes)
+	}
+
+	delete(verifyCodeErrorMap, key)
+	return nil
+}
+
+func recordVerifyCodeErrorInfo(user *User, dest, lang string) error {
+	failedSigninLimit, failedSigninFrozenTime, err := GetFailedSigninConfigByUser(user)
+	if err != nil {
+		return err
+	}
+
+	key := getVerifyCodeErrorKey(user, dest)
+
+	verifyCodeErrorMapLock.Lock()
+	defer verifyCodeErrorMapLock.Unlock()
+
+	errorInfo, ok := verifyCodeErrorMap[key]
+	if !ok || errorInfo == nil {
+		errorInfo = &verifyCodeErrorInfo{}
+		verifyCodeErrorMap[key] = errorInfo
+	}
+
+	if errorInfo.wrongTimes < failedSigninLimit {
+		errorInfo.wrongTimes++
+	}
+
+	if errorInfo.wrongTimes >= failedSigninLimit {
+		errorInfo.lastWrongTime = time.Now().UTC()
+	}
+
+	leftChances := failedSigninLimit - errorInfo.wrongTimes
+	if leftChances >= 0 {
+		return fmt.Errorf(i18n.Translate(lang, "check:password or code is incorrect, you have %s remaining chances"), strconv.Itoa(leftChances))
+	}
+
+	return fmt.Errorf(i18n.Translate(lang, "check:You have entered the wrong password or code too many times, please wait for %d minutes and try again"), failedSigninFrozenTime)
+}
+
+func resetVerifyCodeErrorTimes(user *User, dest string) {
+	key := getVerifyCodeErrorKey(user, dest)
+
+	verifyCodeErrorMapLock.Lock()
+	defer verifyCodeErrorMapLock.Unlock()
+
+	delete(verifyCodeErrorMap, key)
+}
+
+func CheckVerifyCodeWithLimit(user *User, dest, code, lang string) error {
+	if err := checkVerifyCodeErrorTimes(user, dest, lang); err != nil {
+		return err
+	}
+
+	result, err := CheckVerificationCode(dest, code, lang)
+	if err != nil {
+		return err
+	}
+
+	switch result.Code {
+	case VerificationSuccess:
+		resetVerifyCodeErrorTimes(user, dest)
+		return nil
+	case wrongCodeError:
+		return recordVerifyCodeErrorInfo(user, dest, lang)
+	default:
+		return errors.New(result.Msg)
 	}
 }
 
 func CheckFaceId(user *User, faceId []float64, lang string) error {
 	if len(user.FaceIds) == 0 {
-		return fmt.Errorf(i18n.Translate(lang, "check:Face data does not exist, cannot log in"))
+		return errors.New(i18n.Translate(lang, "check:Face data does not exist, cannot log in"))
 	}
 
 	for _, userFaceId := range user.FaceIds {
@@ -343,7 +462,7 @@ func CheckFaceId(user *User, faceId []float64, lang string) error {
 		}
 	}
 
-	return fmt.Errorf(i18n.Translate(lang, "check:Face data mismatch"))
+	return errors.New(i18n.Translate(lang, "check:Face data mismatch"))
 }
 
 func GetVerifyType(username string) (verificationCodeType string) {
@@ -358,10 +477,13 @@ func GetVerifyType(username string) (verificationCodeType string) {
 var stdNums = []byte("0123456789")
 
 func getRandomCode(length int) string {
-	var result []byte
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	result := make([]byte, length)
 	for i := 0; i < length; i++ {
-		result = append(result, stdNums[r.Intn(len(stdNums))])
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(stdNums))))
+		if err != nil {
+			panic(err)
+		}
+		result[i] = stdNums[n.Int64()]
 	}
 	return string(result)
 }
@@ -421,6 +543,9 @@ func getVerification(owner string, name string) (*VerificationRecord, error) {
 }
 
 func GetVerification(id string) (*VerificationRecord, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return nil, err
+	}
 	return getVerification(owner, name)
 }

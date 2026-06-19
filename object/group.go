@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/util"
 	"github.com/xorm-io/builder"
 	"github.com/xorm-io/core"
@@ -45,7 +46,8 @@ type Group struct {
 	HaveChildren bool     `xorm:"-" json:"haveChildren"`
 	Children     []*Group `json:"children,omitempty"`
 
-	IsEnabled bool `json:"isEnabled"`
+	IsEnabled  bool              `json:"isEnabled"`
+	Properties map[string]string `xorm:"mediumtext" json:"properties"`
 }
 
 type GroupNode struct{}
@@ -63,6 +65,16 @@ func GetGroupCount(owner, field, value string) (int64, error) {
 func GetGroups(owner string) ([]*Group, error) {
 	groups := []*Group{}
 	err := ormer.Engine.Desc("created_time").Find(&groups, &Group{Owner: owner})
+	if err != nil {
+		return nil, err
+	}
+
+	return groups, nil
+}
+
+func GetGlobalGroups() ([]*Group, error) {
+	groups := []*Group{}
+	err := ormer.Engine.Desc("created_time").Find(&groups)
 	if err != nil {
 		return nil, err
 	}
@@ -125,15 +137,25 @@ func getGroup(owner string, name string) (*Group, error) {
 }
 
 func GetGroup(id string) (*Group, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return nil, err
+	}
 	return getGroup(owner, name)
 }
 
-func UpdateGroup(id string, group *Group) (bool, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+func UpdateGroup(id string, group *Group, isGlobalAdmin bool, lang string) (bool, error) {
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return false, err
+	}
 	oldGroup, err := getGroup(owner, name)
 	if oldGroup == nil {
 		return false, err
+	}
+
+	if !isGlobalAdmin && oldGroup.Owner != group.Owner {
+		return false, errors.New(i18n.Translate(lang, "auth:Unauthorized operation"))
 	}
 
 	err = checkGroupName(group.Name)
@@ -289,7 +311,10 @@ func ConvertToTreeData(groups []*Group, parentId string) []*Group {
 }
 
 func GetGroupUserCount(groupId string, field, value string) (int64, error) {
-	owner, _ := util.GetOwnerAndNameFromId(groupId)
+	owner, _, err := util.GetOwnerAndNameFromIdWithError(groupId)
+	if err != nil {
+		return 0, err
+	}
 	names, err := userEnforcer.GetUserNamesByGroupName(groupId)
 	if err != nil {
 		return 0, err
@@ -299,16 +324,21 @@ func GetGroupUserCount(groupId string, field, value string) (int64, error) {
 		return int64(len(names)), nil
 	} else {
 		tableNamePrefix := conf.GetConfigString("tableNamePrefix")
-		return ormer.Engine.Table(tableNamePrefix+"user").
-			Where("owner = ?", owner).In("name", names).
-			And(fmt.Sprintf("user.%s like ?", util.CamelToSnakeCase(field)), "%"+value+"%").
-			Count()
+		session := ormer.Engine.Table(tableNamePrefix+"user").
+			Where("owner = ?", owner).In("name", names)
+		if util.FilterField(field) {
+			session = session.And(fmt.Sprintf("user.%s like ?", util.CamelToSnakeCase(field)), "%"+value+"%")
+		}
+		return session.Count()
 	}
 }
 
 func GetPaginationGroupUsers(groupId string, offset, limit int, field, value, sortField, sortOrder string) ([]*User, error) {
 	users := []*User{}
-	owner, _ := util.GetOwnerAndNameFromId(groupId)
+	owner, _, err := util.GetOwnerAndNameFromIdWithError(groupId)
+	if err != nil {
+		return nil, err
+	}
 	names, err := userEnforcer.GetUserNamesByGroupName(groupId)
 	if err != nil {
 		return nil, err
@@ -323,15 +353,15 @@ func GetPaginationGroupUsers(groupId string, offset, limit int, field, value, so
 		session.Limit(limit, offset)
 	}
 
-	if field != "" && value != "" {
+	if field != "" && value != "" && util.FilterField(field) {
 		session = session.And(fmt.Sprintf("%s.%s like ?", prefixedUserTable, util.CamelToSnakeCase(field)), "%"+value+"%")
 	}
 
-	if sortField == "" || sortOrder == "" {
+	if sortField == "" || sortOrder == "" || !util.FilterField(sortField) {
 		sortField = "created_time"
 	}
 
-	orderQuery := fmt.Sprintf("%s.%s", prefixedUserTable, util.SnakeString(sortField))
+	orderQuery := fmt.Sprintf("%s.%s", prefixedUserTable, util.CamelToSnakeCase(sortField))
 
 	if sortOrder == "ascend" {
 		session = session.Asc(orderQuery)
@@ -414,6 +444,10 @@ func GroupChangeTrigger(oldName, newName string) error {
 	for _, user := range users {
 		user.Groups = util.ReplaceVal(user.Groups, oldName, newName)
 		_, err := updateUser(user.GetId(), user, []string{"groups"})
+		if err != nil {
+			return err
+		}
+		_, err = userEnforcer.UpdateGroupsForUser(user.GetId(), user.Groups)
 		if err != nil {
 			return err
 		}

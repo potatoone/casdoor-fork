@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/beego/beego/utils/pagination"
+	"github.com/beego/beego/v2/core/utils/pagination"
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
@@ -32,12 +32,12 @@ import (
 // @Success 200 {array} object.User The Response object
 // @router /get-global-users [get]
 func (c *ApiController) GetGlobalUsers() {
-	limit := c.Input().Get("pageSize")
-	page := c.Input().Get("p")
-	field := c.Input().Get("field")
-	value := c.Input().Get("value")
-	sortField := c.Input().Get("sortField")
-	sortOrder := c.Input().Get("sortOrder")
+	limit := c.Ctx.Input.Query("pageSize")
+	page := c.Ctx.Input.Query("p")
+	field := c.Ctx.Input.Query("field")
+	value := c.Ctx.Input.Query("value")
+	sortField := c.Ctx.Input.Query("sortField")
+	sortOrder := c.Ctx.Input.Query("sortOrder")
 
 	if limit == "" || page == "" {
 		users, err := object.GetMaskedUsers(object.GetGlobalUsers())
@@ -55,7 +55,7 @@ func (c *ApiController) GetGlobalUsers() {
 			return
 		}
 
-		paginator := pagination.SetPaginator(c.Ctx, limit, count)
+		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
 		users, err := object.GetPaginationGlobalUsers(paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
 			c.ResponseError(err.Error())
@@ -80,14 +80,14 @@ func (c *ApiController) GetGlobalUsers() {
 // @Success 200 {array} object.User The Response object
 // @router /get-users [get]
 func (c *ApiController) GetUsers() {
-	owner := c.Input().Get("owner")
-	groupName := c.Input().Get("groupName")
-	limit := c.Input().Get("pageSize")
-	page := c.Input().Get("p")
-	field := c.Input().Get("field")
-	value := c.Input().Get("value")
-	sortField := c.Input().Get("sortField")
-	sortOrder := c.Input().Get("sortOrder")
+	owner := c.Ctx.Input.Query("owner")
+	groupName := c.Ctx.Input.Query("groupName")
+	limit := c.Ctx.Input.Query("pageSize")
+	page := c.Ctx.Input.Query("p")
+	field := c.Ctx.Input.Query("field")
+	value := c.Ctx.Input.Query("value")
+	sortField := c.Ctx.Input.Query("sortField")
+	sortOrder := c.Ctx.Input.Query("sortOrder")
 
 	if limit == "" || page == "" {
 		if groupName != "" {
@@ -115,7 +115,7 @@ func (c *ApiController) GetUsers() {
 			return
 		}
 
-		paginator := pagination.SetPaginator(c.Ctx, limit, count)
+		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
 		users, err := object.GetPaginationUsers(owner, paginator.Offset(), limit, field, value, sortField, sortOrder, groupName)
 		if err != nil {
 			c.ResponseError(err.Error())
@@ -144,11 +144,11 @@ func (c *ApiController) GetUsers() {
 // @Success 200 {object} object.User The Response object
 // @router /get-user [get]
 func (c *ApiController) GetUser() {
-	id := c.Input().Get("id")
-	email := c.Input().Get("email")
-	phone := c.Input().Get("phone")
-	userId := c.Input().Get("userId")
-	owner := c.Input().Get("owner")
+	id := c.Ctx.Input.Query("id")
+	email := c.Ctx.Input.Query("email")
+	phone := c.Ctx.Input.Query("phone")
+	userId := c.Ctx.Input.Query("userId")
+	owner := c.Ctx.Input.Query("owner")
 	var err error
 	var userFromUserId *object.User
 	if userId != "" && owner != "" {
@@ -212,7 +212,7 @@ func (c *ApiController) GetUser() {
 		if !organization.IsProfilePublic {
 			requestUserId := c.GetSessionUsername()
 			var hasPermission bool
-			hasPermission, err = object.CheckUserPermission(requestUserId, user.GetId(), false, c.GetAcceptLanguage())
+			hasPermission, err = object.CheckUserPermission(requestUserId, user.GetId(), true, c.GetAcceptLanguage())
 			if !hasPermission {
 				c.ResponseError(err.Error())
 				return
@@ -230,7 +230,10 @@ func (c *ApiController) GetUser() {
 		return
 	}
 
-	isAdminOrSelf := c.IsAdminOrSelf(user)
+	requestUserId := c.GetSessionUsername()
+	isApplicationRequest := object.IsAppUser(requestUserId)
+	isAdmin := c.IsAdmin() || isApplicationRequest
+	isAdminOrSelf := c.IsAdminOrSelf(user) || isApplicationRequest
 	user, err = object.GetMaskedUser(user, isAdminOrSelf)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -238,7 +241,7 @@ func (c *ApiController) GetUser() {
 	}
 
 	if organization != nil && user != nil {
-		user, err = object.GetFilteredUser(user, c.IsAdmin(), c.IsAdminOrSelf(user), organization.AccountItems)
+		user, err = object.GetFilteredUser(user, isAdmin, isAdminOrSelf, organization.AccountItems)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -252,13 +255,17 @@ func (c *ApiController) GetUser() {
 // @Title UpdateUser
 // @Tag User API
 // @Description update user
-// @Param   id     query    string  true        "The id ( owner/name ) of the user"
+// @Param   id     query    string  false        "The id ( owner/name ) of the user"
+// @Param   userId query    string  false        "The userId (UUID) of the user"
+// @Param   owner  query    string  false        "The owner of the user (required when using userId)"
 // @Param   body    body   object.User  true        "The details of the user"
 // @Success 200 {object} controllers.Response The Response object
 // @router /update-user [post]
 func (c *ApiController) UpdateUser() {
-	id := c.Input().Get("id")
-	columnsStr := c.Input().Get("columns")
+	id := c.Ctx.Input.Query("id")
+	userId := c.Ctx.Input.Query("userId")
+	owner := c.Ctx.Input.Query("owner")
+	columnsStr := c.Ctx.Input.Query("columns")
 
 	var user object.User
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &user)
@@ -267,17 +274,38 @@ func (c *ApiController) UpdateUser() {
 		return
 	}
 
-	if id == "" {
+	if id == "" && userId == "" {
 		id = c.GetSessionUsername()
 		if id == "" {
 			c.ResponseError(c.T("general:Missing parameter"))
 			return
 		}
 	}
-	oldUser, err := object.GetUser(id)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
+
+	var userFromUserId *object.User
+	if userId != "" && owner != "" {
+		userFromUserId, err = object.GetUserByUserId(owner, userId)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if userFromUserId == nil {
+			c.ResponseError(fmt.Sprintf(c.T("general:The user: %s doesn't exist"), userId))
+			return
+		}
+
+		id = util.GetId(userFromUserId.Owner, userFromUserId.Name)
+	}
+
+	var oldUser *object.User
+	if userId != "" {
+		oldUser = userFromUserId
+	} else {
+		oldUser, err = object.GetUser(id)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	if oldUser == nil {
@@ -285,7 +313,21 @@ func (c *ApiController) UpdateUser() {
 		return
 	}
 
+	if columnsStr != "" {
+		mergedUser := *oldUser
+		if err = json.Unmarshal(c.Ctx.Input.RequestBody, &mergedUser); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		user = mergedUser
+	}
+
 	if oldUser.Owner == "built-in" && oldUser.Name == "admin" && (user.Owner != "built-in" || user.Name != "admin") {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
+	if !c.IsGlobalAdmin() && user.Owner != oldUser.Owner {
 		c.ResponseError(c.T("auth:Unauthorized operation"))
 		return
 	}
@@ -311,7 +353,7 @@ func (c *ApiController) UpdateUser() {
 	}
 
 	isAdmin := c.IsAdmin()
-	allowDisplayNameEmpty := c.Input().Get("allowEmpty") != ""
+	allowDisplayNameEmpty := c.Ctx.Input.Query("allowEmpty") != ""
 	if pass, err := object.CheckPermissionForUpdateUser(oldUser, &user, isAdmin, allowDisplayNameEmpty, c.GetAcceptLanguage()); !pass {
 		c.ResponseError(err)
 		return
@@ -319,7 +361,9 @@ func (c *ApiController) UpdateUser() {
 
 	columns := []string{}
 	if columnsStr != "" {
-		columns = strings.Split(columnsStr, ",")
+		for _, col := range strings.Split(columnsStr, ",") {
+			columns = append(columns, util.CamelToSnakeCase(col))
+		}
 	}
 
 	affected, err := object.UpdateUser(id, &user, columns, isAdmin)
@@ -365,6 +409,17 @@ func (c *ApiController) AddUser() {
 	if msg != "" {
 		c.ResponseError(msg)
 		return
+	}
+
+	// Set RegisterSource based on the current user if not already set
+	if user.RegisterType == "" {
+		user.RegisterType = "Add User"
+	}
+	if user.RegisterSource == "" {
+		currentUser := c.getCurrentUser()
+		if currentUser != nil {
+			user.RegisterSource = currentUser.GetId()
+		}
 	}
 
 	c.Data["json"] = wrapActionResponse(object.AddUser(&user, c.GetAcceptLanguage()))
@@ -464,11 +519,6 @@ func (c *ApiController) SetPassword() {
 	//	return
 	// }
 
-	if strings.Contains(newPassword, " ") {
-		c.ResponseError(c.T("user:New password cannot contain blank space."))
-		return
-	}
-
 	userId := util.GetId(userOwner, userName)
 
 	user, err := object.GetUser(userId)
@@ -478,6 +528,41 @@ func (c *ApiController) SetPassword() {
 	}
 	if user == nil {
 		c.ResponseError(fmt.Sprintf(c.T("general:The user: %s doesn't exist"), userId))
+		return
+	}
+
+	// Get organization to check for password obfuscation settings
+	organization, err := object.GetOrganizationByUser(user)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if organization == nil {
+		c.ResponseError(fmt.Sprintf(c.T("auth:the organization: %s is not found"), user.Owner))
+		return
+	}
+
+	// Deobfuscate passwords if organization has password obfuscator configured
+	// Note: Deobfuscation is optional - if it fails, we treat the password as plain text
+	// This allows SDKs and raw HTTP API calls to work without obfuscation support
+	if organization.PasswordObfuscatorType != "" && organization.PasswordObfuscatorType != "Plain" {
+		if oldPassword != "" {
+			deobfuscatedOldPassword, deobfuscateErr := util.GetUnobfuscatedPassword(organization.PasswordObfuscatorType, organization.PasswordObfuscatorKey, oldPassword)
+			if deobfuscateErr == nil {
+				oldPassword = deobfuscatedOldPassword
+			}
+		}
+
+		if newPassword != "" {
+			deobfuscatedNewPassword, deobfuscateErr := util.GetUnobfuscatedPassword(organization.PasswordObfuscatorType, organization.PasswordObfuscatorKey, newPassword)
+			if deobfuscateErr == nil {
+				newPassword = deobfuscatedNewPassword
+			}
+		}
+	}
+
+	if strings.Contains(newPassword, " ") {
+		c.ResponseError(c.T("user:New password cannot contain blank space."))
 		return
 	}
 
@@ -500,8 +585,6 @@ func (c *ApiController) SetPassword() {
 			c.ResponseError(c.T("general:Wrong userId"))
 			return
 		}
-		c.SetSession("verifiedCode", "")
-		c.SetSession("verifiedUserId", "")
 	}
 
 	targetUser, err := object.GetUser(userId)
@@ -524,30 +607,28 @@ func (c *ApiController) SetPassword() {
 			}
 		}
 	} else if code == "" {
-		if user.Ldap == "" {
-			err = object.CheckPassword(targetUser, oldPassword, c.GetAcceptLanguage())
-		} else {
-			err = object.CheckLdapUserPassword(targetUser, oldPassword, c.GetAcceptLanguage())
-		}
-		if err != nil {
-			c.ResponseError(err.Error())
-			return
+		if targetUser.Password != "" || user.Ldap != "" {
+			if user.Ldap == "" {
+				err = object.CheckPassword(targetUser, oldPassword, c.GetAcceptLanguage())
+			} else {
+				err = object.CheckLdapUserPassword(targetUser, oldPassword, c.GetAcceptLanguage())
+			}
+			if err != nil {
+				c.ResponseError(err.Error())
+				return
+			}
 		}
 	}
 
-	msg := object.CheckPasswordComplexity(targetUser, newPassword)
+	msg := object.CheckPasswordComplexity(targetUser, newPassword, c.GetAcceptLanguage())
 	if msg != "" {
 		c.ResponseError(msg)
 		return
 	}
 
-	organization, err := object.GetOrganizationByUser(targetUser)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-	if organization == nil {
-		c.ResponseError(fmt.Sprintf(c.T("auth:the organization: %s is not found"), targetUser.Owner))
+	// Check if the new password is the same as the current password
+	if !object.CheckPasswordNotSameAsCurrent(targetUser, newPassword, organization) {
+		c.ResponseError(c.T("user:The new password must be different from your current password"))
 		return
 	}
 
@@ -566,6 +647,11 @@ func (c *ApiController) SetPassword() {
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
+	}
+
+	if code != "" {
+		c.SetSession("verifiedCode", "")
+		c.SetSession("verifiedUserId", "")
 	}
 
 	targetUser.Password = newPassword
@@ -593,6 +679,8 @@ func (c *ApiController) SetPassword() {
 
 // CheckUserPassword
 // @Title CheckUserPassword
+// @Description Check if user password is correct
+// @Param   body body object.User true "User object with password to check"
 // @router /check-user-password [post]
 // @Tag User API
 // @Success 200 {object} object.Userinfo The Response object
@@ -626,9 +714,9 @@ func (c *ApiController) CheckUserPassword() {
 // @Success 200 {array} object.User The Response object
 // @router /get-sorted-users [get]
 func (c *ApiController) GetSortedUsers() {
-	owner := c.Input().Get("owner")
-	sorter := c.Input().Get("sorter")
-	limit := util.ParseInt(c.Input().Get("limit"))
+	owner := c.Ctx.Input.Query("owner")
+	sorter := c.Ctx.Input.Query("sorter")
+	limit := util.ParseInt(c.Ctx.Input.Query("limit"))
 
 	users, err := object.GetMaskedUsers(object.GetSortedUsers(owner, sorter, limit))
 	if err != nil {
@@ -648,8 +736,8 @@ func (c *ApiController) GetSortedUsers() {
 // @Success 200 {int} int The count of filtered users for an organization
 // @router /get-user-count [get]
 func (c *ApiController) GetUserCount() {
-	owner := c.Input().Get("owner")
-	isOnline := c.Input().Get("isOnline")
+	owner := c.Ctx.Input.Query("owner")
+	isOnline := c.Ctx.Input.Query("isOnline")
 
 	var count int64
 	var err error
@@ -664,29 +752,6 @@ func (c *ApiController) GetUserCount() {
 	}
 
 	c.ResponseOk(count)
-}
-
-// AddUserKeys
-// @Title AddUserKeys
-// @router /add-user-keys [post]
-// @Tag User API
-// @Success 200 {object} object.Userinfo The Response object
-func (c *ApiController) AddUserKeys() {
-	var user object.User
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &user)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	isAdmin := c.IsAdmin()
-	affected, err := object.AddUserKeys(&user, isAdmin)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	c.ResponseOk(affected)
 }
 
 func (c *ApiController) RemoveUserFromGroup() {
@@ -712,4 +777,202 @@ func (c *ApiController) RemoveUserFromGroup() {
 	}
 
 	c.ResponseOk(affected)
+}
+
+// ImpersonateUser
+// @Title ImpersonateUser
+// @Tag User API
+// @Description set impersonation user for current admin session
+// @Param   username    formData   string  true        "The username to impersonate (owner/name)"
+// @Success 200 {object} controllers.Response The Response object
+// @router /impersonation-user [post]
+func (c *ApiController) ImpersonateUser() {
+	org, ok := c.RequireAdmin()
+	if !ok {
+		return
+	}
+
+	owner := c.Ctx.Request.Form.Get("owner")
+	name := c.Ctx.Request.Form.Get("name")
+	if owner == "" || name == "" {
+		c.ResponseError(c.T("general:Missing parameter"))
+		return
+	}
+	username := util.GetId(owner, name)
+
+	if !(owner == org || org == "") {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
+	targetUser, err := object.GetUser(username)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if targetUser == nil {
+		c.ResponseError(fmt.Sprintf(c.T("general:The user: %s doesn't exist"), username))
+		return
+	}
+
+	err = c.SetSession("impersonateUser", username)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	c.Ctx.SetCookie("impersonateUser", username, 0, "/")
+	c.ResponseOk()
+}
+
+// ExitImpersonateUser
+// @Title ExitImpersonateUser
+// @Tag User API
+// @Description clear impersonation info for current session
+// @Success 200 {object} controllers.Response The Response object
+// @router /exit-impersonation-user [post]
+func (c *ApiController) ExitImpersonateUser() {
+	_, ok := c.Ctx.Input.GetData("impersonating").(bool)
+	if !ok {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
+	err := c.SetSession("impersonateUser", "")
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	c.Ctx.SetCookie("impersonateUser", "", -1, "/")
+	c.ResponseOk()
+}
+
+// VerifyIdentification
+// @Title VerifyIdentification
+// @Tag User API
+// @Description verify user's real identity using ID Verification provider
+// @Param   owner     query    string  false  "The owner of the user (optional, defaults to logged-in user)"
+// @Param   name      query    string  false  "The name of the user (optional, defaults to logged-in user)"
+// @Param   provider  query    string  false  "The name of the ID Verification provider (optional, auto-selected if not provided)"
+// @Success 200 {object} controllers.Response The Response object
+// @router /verify-identification [post]
+func (c *ApiController) VerifyIdentification() {
+	owner := c.Ctx.Input.Query("owner")
+	name := c.Ctx.Input.Query("name")
+	providerName := c.Ctx.Input.Query("provider")
+
+	// If user not specified, use logged-in user
+	if owner == "" || name == "" {
+		loggedInUser := c.GetSessionUsername()
+		if loggedInUser == "" {
+			c.ResponseError(c.T("general:Please login first"))
+			return
+		}
+		var err error
+		owner, name, err = util.GetOwnerAndNameFromIdWithError(loggedInUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	} else {
+		// If user is specified, check if current user has permission to verify other users
+		// Only admins can verify other users
+		loggedInUser := c.GetSessionUsername()
+		if loggedInUser != util.GetId(owner, name) && !c.IsAdmin() {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+	}
+
+	user, err := object.GetUser(util.GetId(owner, name))
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if user == nil {
+		c.ResponseError(fmt.Sprintf(c.T("general:The user: %s doesn't exist"), util.GetId(owner, name)))
+		return
+	}
+
+	if user.IdCard == "" || user.IdCardType == "" || user.RealName == "" {
+		c.ResponseError(c.T("user:ID card information and real name are required"))
+		return
+	}
+
+	if user.IsVerified {
+		c.ResponseError(c.T("user:User is already verified"))
+		return
+	}
+
+	var provider *object.Provider
+	// If provider not specified, find suitable IDV provider from user's application
+	if providerName == "" {
+		application, err := object.GetApplicationByUser(user)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if application == nil {
+			c.ResponseError(c.T("user:No application found for user"))
+			return
+		}
+
+		// Find IDV provider from application
+		idvProvider, err := object.GetIdvProviderByApplication(util.GetId(application.Owner, application.Name), "false", c.GetAcceptLanguage())
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if idvProvider == nil {
+			c.ResponseError(c.T("provider:No ID Verification provider configured"))
+			return
+		}
+		provider = idvProvider
+	} else {
+		provider, err = object.GetProvider(providerName)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if provider == nil {
+			c.ResponseError(fmt.Sprintf(c.T("auth:The provider: %s does not exist"), providerName))
+			return
+		}
+
+		if provider.Category != "ID Verification" {
+			c.ResponseError(c.T("provider:Provider is not an ID Verification provider"))
+			return
+		}
+	}
+
+	idvProvider := object.GetIdvProviderFromProvider(provider)
+	if idvProvider == nil {
+		c.ResponseError(c.T("provider:Failed to initialize ID Verification provider"))
+		return
+	}
+
+	verified, err := idvProvider.VerifyIdentity(user.IdCardType, user.IdCard, user.RealName)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if !verified {
+		c.ResponseError(c.T("user:Identity verification failed"))
+		return
+	}
+
+	// Set IsVerified to true upon successful verification
+	user.IsVerified = true
+	_, err = object.UpdateUser(user.GetId(), user, []string{"is_verified"}, false)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.ResponseOk(user.RealName)
 }

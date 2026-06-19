@@ -15,7 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beego/beego"
+	"github.com/beego/beego/v2/server/web"
+	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/proxy"
 	"github.com/casdoor/casdoor/util"
 )
@@ -24,6 +25,8 @@ const (
 	javaCliRepo    = "https://api.github.com/repos/jcasbin/casbin-java-cli/releases/latest"
 	goCliRepo      = "https://api.github.com/repos/casbin/casbin-go-cli/releases/latest"
 	rustCliRepo    = "https://api.github.com/repos/casbin-rs/casbin-rust-cli/releases/latest"
+	pythonCliRepo  = "https://api.github.com/repos/casbin/casbin-python-cli/releases/latest"
+	dotnetCliRepo  = "https://api.github.com/repos/casbin-net/casbin-dotnet-cli/releases/latest"
 	downloadFolder = "bin"
 )
 
@@ -43,6 +46,8 @@ func getBinaryNames() map[string]string {
 		golang = "go"
 		java   = "java"
 		rust   = "rust"
+		python = "python"
+		dotnet = "dotnet"
 	)
 
 	arch := runtime.GOARCH
@@ -62,18 +67,24 @@ func getBinaryNames() map[string]string {
 			golang: fmt.Sprintf("casbin-go-cli_Windows_%s.zip", archNames.goArch),
 			java:   "casbin-java-cli.jar",
 			rust:   fmt.Sprintf("casbin-rust-cli-%s-pc-windows-gnu", archNames.rustArch),
+			python: fmt.Sprintf("casbin-python-cli-windows-%s.exe", archNames.goArch),
+			dotnet: fmt.Sprintf("casbin-dotnet-cli-windows-%s.exe", archNames.goArch),
 		}
 	case "darwin":
 		return map[string]string{
 			golang: fmt.Sprintf("casbin-go-cli_Darwin_%s.tar.gz", archNames.goArch),
 			java:   "casbin-java-cli.jar",
 			rust:   fmt.Sprintf("casbin-rust-cli-%s-apple-darwin", archNames.rustArch),
+			python: fmt.Sprintf("casbin-python-cli-darwin-%s", archNames.goArch),
+			dotnet: fmt.Sprintf("casbin-dotnet-cli-darwin-%s", archNames.goArch),
 		}
 	case "linux":
 		return map[string]string{
 			golang: fmt.Sprintf("casbin-go-cli_Linux_%s.tar.gz", archNames.goArch),
 			java:   "casbin-java-cli.jar",
 			rust:   fmt.Sprintf("casbin-rust-cli-%s-unknown-linux-gnu", archNames.rustArch),
+			python: fmt.Sprintf("casbin-python-cli-linux-%s", archNames.goArch),
+			dotnet: fmt.Sprintf("casbin-dotnet-cli-linux-%s", archNames.goArch),
 		}
 	default:
 		return nil
@@ -98,6 +109,16 @@ func getFinalBinaryName(lang string) string {
 			return "casbin-rust-cli.exe"
 		}
 		return "casbin-rust-cli"
+	case "python":
+		if runtime.GOOS == "windows" {
+			return "casbin-python-cli.exe"
+		}
+		return "casbin-python-cli"
+	case "dotnet":
+		if runtime.GOOS == "windows" {
+			return "casbin-dotnet-cli.exe"
+		}
+		return "casbin-dotnet-cli"
 	default:
 		return ""
 	}
@@ -333,9 +354,11 @@ func downloadCLI() error {
 	}
 
 	repos := map[string]string{
-		"java": javaCliRepo,
-		"go":   goCliRepo,
-		"rust": rustCliRepo,
+		"java":   javaCliRepo,
+		"go":     goCliRepo,
+		"rust":   rustCliRepo,
+		"python": pythonCliRepo,
+		"dotnet": dotnetCliRepo,
 	}
 
 	for lang, repo := range repos {
@@ -424,13 +447,13 @@ func downloadCLI() error {
 // @Success 200 {object} controllers.Response The Response object
 // @router /refresh-engines [post]
 func (c *ApiController) RefreshEngines() {
-	if !beego.AppConfig.DefaultBool("isDemoMode", false) {
-		c.ResponseError("refresh engines is only available in demo mode")
+	if !conf.IsDemoMode() && !c.IsAdmin() {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
 		return
 	}
 
-	hash := c.Input().Get("m")
-	timestamp := c.Input().Get("t")
+	hash := c.Ctx.Input.Query("m")
+	timestamp := c.Ctx.Input.Query("t")
 
 	if hash == "" || timestamp == "" {
 		c.ResponseError("invalid identifier")
@@ -476,7 +499,7 @@ func (c *ApiController) RefreshEngines() {
 // @Title ScheduleCLIUpdater
 // @Description Start periodic CLI update scheduler
 func ScheduleCLIUpdater() {
-	if !beego.AppConfig.DefaultBool("isDemoMode", false) {
+	if !web.AppConfig.DefaultBool("isDemoMode", false) {
 		return
 	}
 
@@ -504,7 +527,7 @@ func DownloadCLI() error {
 // @Title InitCLIDownloader
 // @Description Initialize CLI downloader and start update scheduler
 func InitCLIDownloader() {
-	if !beego.AppConfig.DefaultBool("isDemoMode", false) {
+	if !web.AppConfig.DefaultBool("isDemoMode", false) {
 		return
 	}
 

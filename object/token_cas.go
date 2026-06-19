@@ -21,7 +21,7 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
-	"math/rand"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +67,14 @@ type CasAttributes struct {
 	LongTermAuthenticationRequestTokenUsed bool      `xml:"cas:longTermAuthenticationRequestTokenUsed"`
 	IsFromNewLogin                         bool      `xml:"cas:isFromNewLogin"`
 	MemberOf                               []string  `xml:"cas:memberOf"`
+	FirstName                              string    `xml:"cas:firstName,omitempty"`
+	LastName                               string    `xml:"cas:lastName,omitempty"`
+	Title                                  string    `xml:"cas:title,omitempty"`
+	Email                                  string    `xml:"cas:email,omitempty"`
+	Affiliation                            string    `xml:"cas:affiliation,omitempty"`
+	Avatar                                 string    `xml:"cas:avatar,omitempty"`
+	Phone                                  string    `xml:"cas:phone,omitempty"`
+	DisplayName                            string    `xml:"cas:displayName,omitempty"`
 	UserAttributes                         *CasUserAttributes
 	ExtraAttributes                        []*CasAnyAttribute `xml:",any"`
 }
@@ -240,6 +248,24 @@ func GenerateCasToken(userId string, service string) (string, error) {
 			} else {
 				value = escapedValue
 			}
+			switch k {
+			case "firstName":
+				authenticationSuccess.Attributes.FirstName = value
+			case "lastName":
+				authenticationSuccess.Attributes.LastName = value
+			case "title":
+				authenticationSuccess.Attributes.Title = value
+			case "email":
+				authenticationSuccess.Attributes.Email = value
+			case "affiliation":
+				authenticationSuccess.Attributes.Affiliation = value
+			case "avatar":
+				authenticationSuccess.Attributes.Avatar = value
+			case "phone":
+				authenticationSuccess.Attributes.Phone = value
+			case "displayName":
+				authenticationSuccess.Attributes.DisplayName = value
+			}
 			authenticationSuccess.Attributes.UserAttributes.Attributes = append(authenticationSuccess.Attributes.UserAttributes.Attributes, &CasNamedAttribute{
 				Name:  k,
 				Value: value,
@@ -247,7 +273,7 @@ func GenerateCasToken(userId string, service string) (string, error) {
 		}
 	}
 
-	st := fmt.Sprintf("ST-%d", rand.Int())
+	st := fmt.Sprintf("ST-%d", util.RandomIntn(math.MaxInt))
 	stToServiceResponse.Store(st, &CasAuthenticationSuccessWrapper{
 		AuthenticationSuccess: &authenticationSuccess,
 		Service:               service,

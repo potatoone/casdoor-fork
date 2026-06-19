@@ -48,21 +48,26 @@ func NewHttpEmailProvider(endpoint string, method string, httpHeaders map[string
 	return client
 }
 
-func (c *HttpEmailProvider) Send(fromAddress string, fromName string, toAddress string, subject string, content string) error {
+func (c *HttpEmailProvider) Send(fromAddress string, fromName string, toAddress []string, subject string, content string) error {
 	var req *http.Request
 	var err error
 
+	fromAddressField := "fromAddress"
 	fromNameField := "fromName"
 	toAddressField := "toAddress"
+	toAddressesField := "toAddresses"
 	subjectField := "subject"
 	contentField := "content"
-
 	for k, v := range c.bodyMapping {
 		switch k {
+		case "fromAddress":
+			fromAddressField = v
 		case "fromName":
 			fromNameField = v
 		case "toAddress":
 			toAddressField = v
+		case "toAddresses":
+			toAddressesField = v
 		case "subject":
 			subjectField = v
 		case "content":
@@ -72,8 +77,8 @@ func (c *HttpEmailProvider) Send(fromAddress string, fromName string, toAddress 
 
 	if c.method == "POST" || c.method == "PUT" || c.method == "DELETE" {
 		bodyMap := make(map[string]string)
+		bodyMap[fromAddressField] = fromAddress
 		bodyMap[fromNameField] = fromName
-		bodyMap[toAddressField] = toAddress
 		bodyMap[subjectField] = subject
 		bodyMap[contentField] = content
 
@@ -88,6 +93,13 @@ func (c *HttpEmailProvider) Send(fromAddress string, fromName string, toAddress 
 			formValues := url.Values{}
 			for k, v := range bodyMap {
 				formValues.Add(k, v)
+			}
+			if len(toAddress) == 1 {
+				formValues.Add(toAddressField, toAddress[0])
+			} else {
+				for _, addr := range toAddress {
+					formValues.Add(toAddressesField, addr)
+				}
 			}
 			req, err = http.NewRequest(c.method, c.endpoint, strings.NewReader(formValues.Encode()))
 		}
@@ -104,8 +116,15 @@ func (c *HttpEmailProvider) Send(fromAddress string, fromName string, toAddress 
 		}
 
 		q := req.URL.Query()
+		q.Add(fromAddressField, fromAddress)
 		q.Add(fromNameField, fromName)
-		q.Add(toAddressField, toAddress)
+		if len(toAddress) == 1 {
+			q.Add(toAddressField, toAddress[0])
+		} else {
+			for _, addr := range toAddress {
+				q.Add(toAddressesField, addr)
+			}
+		}
 		q.Add(subjectField, subject)
 		q.Add(contentField, content)
 		req.URL.RawQuery = q.Encode()

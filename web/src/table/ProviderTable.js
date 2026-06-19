@@ -76,6 +76,8 @@ class ProviderTable extends React.Component {
         render: (text, record, index) => {
           return (
             <Select virtual={false} style={{width: "100%"}}
+              showSearch
+              optionFilterProp="label"
               value={text}
               onChange={value => {
                 this.updateField(table, index, "name", value);
@@ -88,30 +90,57 @@ class ProviderTable extends React.Component {
                 }
               }} >
               {
-                Setting.getDeduplicatedArray(this.props.providers, table, "name").map((provider, index) => <Option key={index} value={provider.name}>{provider.name}</Option>)
+                Setting.getDeduplicatedArray(this.props.providers, table, "name").map((provider, index) => (
+                  <Option key={index} value={provider.name} label={`${provider.name} ${provider.displayName || ""}`}>
+                    <div style={{display: "flex", alignItems: "center", gap: "8px"}}>
+                      <img width={20} height={20} src={Setting.getProviderLogoURL(provider)} alt={provider.type} />
+                      <span>{provider.displayName && provider.displayName !== provider.name ? `${provider.name} (${provider.displayName})` : provider.name}</span>
+                    </div>
+                  </Option>
+                ))
               }
             </Select>
           );
         },
       },
       {
-        title: i18next.t("provider:Category"),
+        title: i18next.t("general:Category"),
         dataIndex: "category",
         key: "category",
         width: "100px",
         render: (text, record, index) => {
           const provider = Setting.getArrayItem(this.props.providers, "name", record.name);
-          return provider?.category;
+          const owner = provider?.owner || this.getUserOrganization()?.name;
+          const editUrl = provider && owner && provider.name ? `/providers/${owner}/${provider.name}` : null;
+          const categoryText = provider?.category;
+          if (editUrl && categoryText) {
+            return (
+              <a href={editUrl} target="_blank" rel="noopener noreferrer">
+                {categoryText}
+              </a>
+            );
+          }
+          return categoryText;
         },
       },
       {
-        title: i18next.t("provider:Type"),
+        title: i18next.t("general:Type"),
         dataIndex: "type",
         key: "type",
         width: "80px",
         render: (text, record, index) => {
           const provider = Setting.getArrayItem(this.props.providers, "name", record.name);
-          return Provider.getProviderLogoWidget(provider);
+          const owner = provider?.owner || this.getUserOrganization()?.name;
+          const editUrl = provider && owner && provider.name ? `/providers/${owner}/${provider.name}` : null;
+          const typeWidget = Provider.getProviderLogoWidget(provider, {disableLink: !!editUrl});
+          if (editUrl && typeWidget) {
+            return (
+              <a href={editUrl} target="_blank" rel="noopener noreferrer">
+                {typeWidget}
+              </a>
+            );
+          }
+          return typeWidget;
         },
       },
       {
@@ -144,7 +173,7 @@ class ProviderTable extends React.Component {
         key: "canSignUp",
         width: "120px",
         render: (text, record, index) => {
-          if (!["OAuth", "Web3"].includes(record.provider?.category)) {
+          if (!["OAuth", "Web3", "SAML"].includes(record.provider?.category)) {
             return null;
           }
 
@@ -161,7 +190,7 @@ class ProviderTable extends React.Component {
         key: "canSignIn",
         width: "120px",
         render: (text, record, index) => {
-          if (!["OAuth", "Web3"].includes(record.provider?.category)) {
+          if (!["OAuth", "Web3", "SAML"].includes(record.provider?.category)) {
             return null;
           }
 
@@ -178,7 +207,7 @@ class ProviderTable extends React.Component {
         key: "canUnlink",
         width: "120px",
         render: (text, record, index) => {
-          if (!["OAuth", "Web3"].includes(record.provider?.category)) {
+          if (!["OAuth", "Web3", "SAML"].includes(record.provider?.category)) {
             return null;
           }
 
@@ -190,12 +219,37 @@ class ProviderTable extends React.Component {
         },
       },
       {
+        title: i18next.t("provider:Binding rule"),
+        dataIndex: "bindingRule",
+        key: "bindingRule",
+        width: "120px",
+        render: (text, record, index) => {
+          if (!["OAuth", "Web3", "SAML"].includes(record.provider?.category)) {
+            return null;
+          }
+
+          return (
+            <Select virtual={false} style={{width: "100%"}}
+              value={text || ["Email", "Phone", "Name"]}
+              mode={"multiple"}
+              onChange={value => {
+                text = Array.isArray(text) ? text : [];
+                this.updateField(table, index, "bindingRule", value);
+              }} >
+              <Option key="Email" value="Email">{i18next.t("general:Email")}</Option>
+              <Option key="Name" value="Name">{i18next.t("general:Name")}</Option>
+              <Option key="Phone" value="Phone">{i18next.t("general:Phone")}</Option>
+            </Select>
+          );
+        },
+      },
+      {
         title: i18next.t("provider:Prompted"),
         dataIndex: "prompted",
         key: "prompted",
         width: "120px",
         render: (text, record, index) => {
-          if (!["OAuth", "Web3"].includes(record.provider?.category)) {
+          if (!["OAuth", "Web3", "SAML"].includes(record.provider?.category)) {
             return null;
           }
 

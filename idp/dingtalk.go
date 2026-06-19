@@ -16,6 +16,7 @@ package idp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -157,6 +158,10 @@ func (idp *DingTalkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 		return nil, err
 	}
 
+	if dtUserInfo.OpenId == "" || dtUserInfo.UnionId == "" {
+		return nil, errors.New(string(data))
+	}
+
 	countryCode, err := util.GetCountryCode(dtUserInfo.StateCode, dtUserInfo.Mobile)
 	if err != nil {
 		return nil, err
@@ -179,7 +184,7 @@ func (idp *DingTalkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 		return nil, err
 	}
 
-	corpMobile, corpEmail, jobNumber, err := idp.getUserCorpEmail(userId, corpAccessToken)
+	corpMobile, corpEmail, unionId, err := idp.getUserCorpEmail(userId, corpAccessToken)
 	if err == nil {
 		if corpMobile != "" {
 			userInfo.Phone = corpMobile
@@ -189,8 +194,8 @@ func (idp *DingTalkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 			userInfo.Email = corpEmail
 		}
 
-		if jobNumber != "" {
-			userInfo.Username = jobNumber
+		if unionId != "" {
+			userInfo.Username = unionId
 		}
 	}
 
@@ -263,7 +268,7 @@ func (idp *DingTalkIdProvider) getUserId(unionId string, accessToken string) (st
 	if data.ErrCode == 60121 {
 		return "", fmt.Errorf("该应用只允许本企业内部用户登录，您不属于该企业，无法登录")
 	} else if data.ErrCode != 0 {
-		return "", fmt.Errorf(data.ErrMessage)
+		return "", errors.New(data.ErrMessage)
 	}
 	return data.Result.UserId, nil
 }
@@ -280,9 +285,9 @@ func (idp *DingTalkIdProvider) getUserCorpEmail(userId string, accessToken strin
 	var data struct {
 		ErrMessage string `json:"errmsg"`
 		Result     struct {
-			Mobile    string `json:"mobile"`
-			Email     string `json:"email"`
-			JobNumber string `json:"job_number"`
+			Mobile  string `json:"mobile"`
+			Email   string `json:"email"`
+			UnionId string `json:"unionid"`
 		} `json:"result"`
 	}
 	err = json.Unmarshal(respBytes, &data)
@@ -290,7 +295,7 @@ func (idp *DingTalkIdProvider) getUserCorpEmail(userId string, accessToken strin
 		return "", "", "", err
 	}
 	if data.ErrMessage != "ok" {
-		return "", "", "", fmt.Errorf(data.ErrMessage)
+		return "", "", "", errors.New(data.ErrMessage)
 	}
-	return data.Result.Mobile, data.Result.Email, data.Result.JobNumber, nil
+	return data.Result.Mobile, data.Result.Email, data.Result.UnionId, nil
 }

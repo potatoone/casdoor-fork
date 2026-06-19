@@ -70,11 +70,56 @@ var ldapAttributesMapping = map[string]FieldRelation{
 	"title": {userField: "tag", fieldMapper: func(user *object.User) message.AttributeValue {
 		return message.AttributeValue(user.Tag)
 	}},
+	"c": {userField: "region", fieldMapper: func(user *object.User) message.AttributeValue {
+		return message.AttributeValue(user.Region)
+	}},
+	"co": {userField: "region", fieldMapper: func(user *object.User) message.AttributeValue {
+		return message.AttributeValue(user.Region)
+	}},
 	"userPassword": {
 		userField:     "userPassword",
 		notSearchable: true,
 		fieldMapper: func(user *object.User) message.AttributeValue {
 			return message.AttributeValue(getUserPasswordWithType(user))
+		},
+	},
+	"loginShell": {
+		userField:     "loginShell",
+		notSearchable: true,
+		fieldMapper: func(user *object.User) message.AttributeValue {
+			// Check user properties first, otherwise return default shell
+			if user.Properties != nil {
+				if shell, ok := user.Properties["loginShell"]; ok && shell != "" {
+					return message.AttributeValue(shell)
+				}
+			}
+			return message.AttributeValue("/bin/bash")
+		},
+	},
+	"gecos": {
+		userField:     "gecos",
+		notSearchable: true,
+		fieldMapper: func(user *object.User) message.AttributeValue {
+			// GECOS field typically contains full name and other user info
+			// Format: Full Name,Room Number,Work Phone,Home Phone,Other
+			gecos := user.DisplayName
+			if gecos == "" {
+				gecos = user.Name
+			}
+			return message.AttributeValue(gecos)
+		},
+	},
+	"sshPublicKey": {
+		userField:     "sshPublicKey",
+		notSearchable: true,
+		fieldMapper: func(user *object.User) message.AttributeValue {
+			// Return SSH public key from user properties
+			if user.Properties != nil {
+				if sshKey, ok := user.Properties["sshPublicKey"]; ok && sshKey != "" {
+					return message.AttributeValue(sshKey)
+				}
+			}
+			return message.AttributeValue("")
 		},
 	},
 }
@@ -153,6 +198,20 @@ func stringInSlice(value string, list []string) bool {
 	return false
 }
 
+// IsLdapAttrAllowed checks whether the given LDAP attribute is allowed for the organization.
+// An empty filter or a filter containing "All" means all attributes are allowed.
+func IsLdapAttrAllowed(org *object.Organization, attr string) bool {
+	if org == nil || len(org.LdapAttributes) == 0 {
+		return true
+	}
+	for _, f := range org.LdapAttributes {
+		if strings.EqualFold(f, "All") || strings.EqualFold(f, attr) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildUserFilterCondition(filter interface{}) (builder.Cond, error) {
 	switch f := filter.(type) {
 	case message.FilterAnd:
@@ -184,6 +243,10 @@ func buildUserFilterCondition(filter interface{}) (builder.Cond, error) {
 	case message.FilterEqualityMatch:
 		attr := string(f.AttributeDesc())
 
+		if strings.EqualFold(attr, "objectclass") && strings.EqualFold(string(f.AssertionValue()), "posixAccount") {
+			return builder.Expr("1 = 1"), nil
+		}
+
 		if attr == ldapMemberOfAttr {
 			var names []string
 			groupId := string(f.AssertionValue())
@@ -200,6 +263,9 @@ func buildUserFilterCondition(filter interface{}) (builder.Cond, error) {
 		}
 		return builder.Eq{field: string(f.AssertionValue())}, nil
 	case message.FilterPresent:
+		if strings.EqualFold(string(f), "objectclass") {
+			return builder.Expr("1 = 1"), nil
+		}
 		field, err := getUserFieldFromAttribute(string(f))
 		if err != nil {
 			return nil, err
@@ -268,7 +334,7 @@ func GetFilteredUsers(m *ldap.Message) (filteredUsers []*object.User, code int) 
 			}
 			return filteredUsers, ldap.LDAPResultSuccess
 		}
-		if m.Client.IsGlobalAdmin || org == m.Client.OrgName {
+		if m.Client.IsGlobalAdmin || (m.Client.IsOrgAdmin && org == m.Client.OrgName) {
 			filteredUsers, err = object.GetUsersWithFilter(org, buildSafeCondition(r.Filter()))
 			if err != nil {
 				panic(err)
@@ -318,6 +384,59 @@ func GetFilteredUsers(m *ldap.Message) (filteredUsers []*object.User, code int) 
 
 		filteredUsers = append(filteredUsers, users...)
 		return filteredUsers, ldap.LDAPResultSuccess
+	}
+}
+
+func GetFilteredGroups(m *ldap.Message, baseDN string, filterStr string) ([]*object.Group, int) {
+	name, org, code := getNameAndOrgFromFilter(baseDN, filterStr)
+	if code != ldap.LDAPResultSuccess {
+		return nil, code
+	}
+
+	var groups []*object.Group
+	var err error
+
+	if name == "*" {
+		if m.Client.IsGlobalAdmin && org == "*" {
+			groups, err = object.GetGlobalGroups()
+			if err != nil {
+				panic(err)
+			}
+		} else if m.Client.IsGlobalAdmin || (m.Client.IsOrgAdmin && org == m.Client.OrgName) {
+			groups, err = object.GetGroups(org)
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			return nil, ldap.LDAPResultInsufficientAccessRights
+		}
+	} else {
+		return nil, ldap.LDAPResultNoSuchObject
+	}
+
+	return groups, ldap.LDAPResultSuccess
+}
+
+func GetFilteredOrganizations(m *ldap.Message) ([]*object.Organization, int) {
+	if m.Client.IsGlobalAdmin {
+		organizations, err := object.GetOrganizations("")
+		if err != nil {
+			panic(err)
+		}
+		return organizations, ldap.LDAPResultSuccess
+	} else if m.Client.IsOrgAdmin {
+		requestUserId := util.GetId(m.Client.OrgName, m.Client.UserName)
+		user, err := object.GetUser(requestUserId)
+		if err != nil {
+			panic(err)
+		}
+		organization, err := object.GetOrganizationByUser(user)
+		if err != nil {
+			panic(err)
+		}
+		return []*object.Organization{organization}, ldap.LDAPResultSuccess
+	} else {
+		return nil, ldap.LDAPResultInsufficientAccessRights
 	}
 }
 

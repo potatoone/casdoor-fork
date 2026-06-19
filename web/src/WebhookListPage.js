@@ -148,7 +148,7 @@ class WebhookListPage extends BaseListPage {
         title: i18next.t("webhook:Content type"),
         dataIndex: "contentType",
         key: "contentType",
-        width: "140px",
+        width: "150px",
         sorter: true,
         filterMultiple: false,
         filters: [
@@ -171,11 +171,11 @@ class WebhookListPage extends BaseListPage {
         title: i18next.t("webhook:Is user extended"),
         dataIndex: "isUserExtended",
         key: "isUserExtended",
-        width: "140px",
+        width: "150px",
         sorter: true,
         render: (text, record, index) => {
           return (
-            <Switch disabled checkedChildren="ON" unCheckedChildren="OFF" checked={text} />
+            <Switch disabled checkedChildren={i18next.t("general:ON")} unCheckedChildren={i18next.t("general:OFF")} checked={text} />
           );
         },
       },
@@ -187,7 +187,7 @@ class WebhookListPage extends BaseListPage {
         sorter: true,
         render: (text, record, index) => {
           return (
-            <Switch disabled checkedChildren="ON" unCheckedChildren="OFF" checked={text} />
+            <Switch disabled checkedChildren={i18next.t("general:ON")} unCheckedChildren={i18next.t("general:OFF")} checked={text} />
           );
         },
       },
@@ -200,7 +200,7 @@ class WebhookListPage extends BaseListPage {
         fixed: (Setting.isMobile()) ? "false" : "right",
         render: (text, record, index) => {
           return (
-            <Switch disabled checkedChildren="ON" unCheckedChildren="OFF" checked={text} />
+            <Switch disabled checkedChildren={i18next.t("general:ON")} unCheckedChildren={i18next.t("general:OFF")} checked={text} />
           );
         },
       },
@@ -241,7 +241,7 @@ class WebhookListPage extends BaseListPage {
               <Button type="primary" size="small" onClick={this.addWebhook.bind(this)}>{i18next.t("general:Add")}</Button>
             </div>
           )}
-          loading={this.state.loading}
+          loading={this.getTableLoading()}
           onChange={this.handleTableChange}
         />
       </div>

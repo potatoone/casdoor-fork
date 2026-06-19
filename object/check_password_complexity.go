@@ -16,9 +16,12 @@ package object
 
 import (
 	"regexp"
+
+	"github.com/casdoor/casdoor/cred"
+	"github.com/casdoor/casdoor/i18n"
 )
 
-type ValidatorFunc func(password string) string
+type ValidatorFunc func(password string, lang string) string
 
 var (
 	regexLowerCase = regexp.MustCompile(`[a-z]`)
@@ -27,50 +30,50 @@ var (
 	regexSpecial   = regexp.MustCompile("[!-/:-@[-`{-~]")
 )
 
-func isValidOption_AtLeast6(password string) string {
+func isValidOption_AtLeast6(password string, lang string) string {
 	if len(password) < 6 {
-		return "The password must have at least 6 characters"
+		return i18n.Translate(lang, "check:The password must have at least 6 characters")
 	}
 	return ""
 }
 
-func isValidOption_AtLeast8(password string) string {
+func isValidOption_AtLeast8(password string, lang string) string {
 	if len(password) < 8 {
-		return "The password must have at least 8 characters"
+		return i18n.Translate(lang, "check:The password must have at least 8 characters")
 	}
 	return ""
 }
 
-func isValidOption_Aa123(password string) string {
+func isValidOption_Aa123(password string, lang string) string {
 	hasLowerCase := regexLowerCase.MatchString(password)
 	hasUpperCase := regexUpperCase.MatchString(password)
 	hasDigit := regexDigit.MatchString(password)
 
 	if !hasLowerCase || !hasUpperCase || !hasDigit {
-		return "The password must contain at least one uppercase letter, one lowercase letter and one digit"
+		return i18n.Translate(lang, "check:The password must contain at least one uppercase letter, one lowercase letter and one digit")
 	}
 	return ""
 }
 
-func isValidOption_SpecialChar(password string) string {
+func isValidOption_SpecialChar(password string, lang string) string {
 	if !regexSpecial.MatchString(password) {
-		return "The password must contain at least one special character"
+		return i18n.Translate(lang, "check:The password must contain at least one special character")
 	}
 	return ""
 }
 
-func isValidOption_NoRepeat(password string) string {
+func isValidOption_NoRepeat(password string, lang string) string {
 	for i := 0; i < len(password)-1; i++ {
 		if password[i] == password[i+1] {
-			return "The password must not contain any repeated characters"
+			return i18n.Translate(lang, "check:The password must not contain any repeated characters")
 		}
 	}
 	return ""
 }
 
-func checkPasswordComplexity(password string, options []string) string {
+func checkPasswordComplexity(password string, options []string, lang string) string {
 	if len(password) == 0 {
-		return "Please input your password!"
+		return i18n.Translate(lang, "check:Password cannot be empty")
 	}
 
 	if len(options) == 0 {
@@ -88,11 +91,34 @@ func checkPasswordComplexity(password string, options []string) string {
 	for _, option := range options {
 		checkerFunc, ok := checkers[option]
 		if ok {
-			errorMsg := checkerFunc(password)
+			errorMsg := checkerFunc(password, lang)
 			if errorMsg != "" {
 				return errorMsg
 			}
 		}
 	}
 	return ""
+}
+
+// CheckPasswordNotSameAsCurrent checks if the new password is different from the current password
+func CheckPasswordNotSameAsCurrent(user *User, newPassword string, organization *Organization) bool {
+	if user.Password == "" {
+		// User doesn't have a password set (e.g., OAuth-only users), allow any password
+		return true
+	}
+
+	credManager := cred.GetCredManager(organization.PasswordType)
+	if credManager == nil {
+		// If no credential manager is available, we can't compare passwords
+		return true
+	}
+
+	// Check if the new password is the same as the current password
+	// Try with both organization salt and user salt (like CheckPassword function does)
+	if credManager.IsPasswordCorrect(newPassword, user.Password, organization.PasswordSalt) ||
+		credManager.IsPasswordCorrect(newPassword, user.Password, user.PasswordSalt) {
+		return false
+	}
+
+	return true
 }

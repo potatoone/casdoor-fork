@@ -15,6 +15,7 @@
 package idp
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -86,8 +87,9 @@ import (
 )
 
 type GothIdProvider struct {
-	Provider goth.Provider
-	Session  goth.Session
+	Provider     goth.Provider
+	Session      goth.Session
+	CodeVerifier string
 }
 
 func NewGothIdProvider(providerType string, clientId string, clientSecret string, clientId2 string, clientSecret2 string, redirectUrl string, hostUrl string) (*GothIdProvider, error) {
@@ -447,7 +449,13 @@ func (idp *GothIdProvider) GetToken(code string) (*oauth2.Token, error) {
 		value = url.Values{}
 		value.Add("code", code)
 		if idp.Provider.Name() == "twitterv2" || idp.Provider.Name() == "fitbit" {
-			value.Add("oauth_verifier", "casdoor-verifier")
+			// Use dynamic code verifier if provided, otherwise fall back to static one
+			verifier := idp.CodeVerifier
+			if verifier == "" {
+				verifier = "casdoor-verifier"
+			}
+			// RFC 7636 PKCE uses 'code_verifier' parameter
+			value.Add("code_verifier", verifier)
 		}
 	}
 	accessToken, err := idp.Session.Authorize(idp.Provider, value)
@@ -484,6 +492,41 @@ func getUser(gothUser goth.User, provider string) *UserInfo {
 		Email:       gothUser.Email,
 		AvatarUrl:   gothUser.AvatarURL,
 	}
+
+	// Capture additional fields in Extra
+	extra := make(map[string]string)
+	if gothUser.FirstName != "" {
+		extra["firstName"] = gothUser.FirstName
+	}
+	if gothUser.LastName != "" {
+		extra["lastName"] = gothUser.LastName
+	}
+	if gothUser.Location != "" {
+		extra["location"] = gothUser.Location
+	}
+	if gothUser.Description != "" {
+		extra["description"] = gothUser.Description
+	}
+	// Add all raw data from the provider
+	for k, v := range gothUser.RawData {
+		if v != nil {
+			switch val := v.(type) {
+			case string:
+				extra[k] = val
+			case float64:
+				extra[k] = fmt.Sprintf("%v", val)
+			case bool:
+				extra[k] = fmt.Sprintf("%v", val)
+			default:
+				// For complex types, marshal to JSON string
+				if jsonVal, err := json.Marshal(val); err == nil {
+					extra[k] = string(jsonVal)
+				}
+			}
+		}
+	}
+	user.Extra = extra
+
 	// Some idp return an empty Name
 	// so construct the Name with firstname and lastname or nickname
 	if user.Username == "" {

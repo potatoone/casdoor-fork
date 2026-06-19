@@ -35,6 +35,7 @@ type Plan struct {
 	Product          string   `xorm:"varchar(100)" json:"product"`
 	PaymentProviders []string `xorm:"varchar(100)" json:"paymentProviders"` // payment providers for related product
 	IsEnabled        bool     `json:"isEnabled"`
+	IsExclusive      bool     `json:"isExclusive"` // if true, a user can only have at most one subscription of this plan
 
 	Role    string   `xorm:"varchar(100)" json:"role"`
 	Options []string `xorm:"-" json:"options"`
@@ -108,12 +109,18 @@ func getPlan(owner, name string) (*Plan, error) {
 }
 
 func GetPlan(id string) (*Plan, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return nil, err
+	}
 	return getPlan(owner, name)
 }
 
 func UpdatePlan(id string, plan *Plan) (bool, error) {
-	owner, name := util.GetOwnerAndNameFromId(id)
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return false, err
+	}
 	if p, err := getPlan(owner, name); err != nil {
 		return false, err
 	} else if p == nil {

@@ -17,9 +17,9 @@ package idp
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,7 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skip2/go-qrcode"
 	"golang.org/x/oauth2"
 )
 
@@ -126,7 +125,7 @@ func (idp *WeChatIdProvider) GetToken(code string) (*oauth2.Token, error) {
 
 	// {"errcode":40163,"errmsg":"code been used, rid: 6206378a-793424c0-2e4091cc"}
 	if strings.Contains(buf.String(), "errcode") {
-		return nil, fmt.Errorf(buf.String())
+		return nil, errors.New(buf.String())
 	}
 
 	var wechatAccessToken WechatAccessToken
@@ -324,10 +323,7 @@ func GetWechatOfficialAccountQRCode(clientId string, clientSecret string, provid
 		return "", "", err
 	}
 
-	var png []byte
-	png, err = qrcode.Encode(data.URL, qrcode.Medium, 256)
-	base64Image := base64.StdEncoding.EncodeToString(png)
-	return base64Image, data.Ticket, nil
+	return data.URL, data.Ticket, nil
 }
 
 func VerifyWechatSignature(token string, nonce string, timestamp string, signature string) bool {

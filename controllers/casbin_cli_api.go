@@ -21,10 +21,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/casdoor/casdoor/conf"
 )
 
 type CLIVersionInfo struct {
@@ -37,6 +40,46 @@ var (
 	cliVersionCache = make(map[string]*CLIVersionInfo)
 	cliVersionMutex sync.RWMutex
 )
+
+// cleanOldMEIFolders cleans up old _MEIXXX folders from the Casdoor temp directory
+// that are older than 24 hours. These folders are created by PyInstaller when
+// executing casbin-python-cli and can accumulate over time.
+func cleanOldMEIFolders() {
+	tempDir := "temp"
+	cutoffTime := time.Now().Add(-24 * time.Hour)
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		// Log error but don't fail - cleanup is best-effort
+		// This is expected if temp directory doesn't exist yet
+		return
+	}
+
+	for _, entry := range entries {
+		// Check if the entry is a directory and matches the _MEI pattern
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "_MEI") {
+			continue
+		}
+
+		dirPath := filepath.Join(tempDir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// Check if the folder is older than 24 hours
+		if info.ModTime().Before(cutoffTime) {
+			// Try to remove the directory
+			err = os.RemoveAll(dirPath)
+			if err != nil {
+				// Log but continue with other folders
+				fmt.Printf("failed to remove old MEI folder %s: %v\n", dirPath, err)
+			} else {
+				fmt.Printf("removed old MEI folder: %s\n", dirPath)
+			}
+		}
+	}
+}
 
 // getCLIVersion
 // @Title getCLIVersion
@@ -65,6 +108,9 @@ func getCLIVersion(language string) (string, error) {
 		}
 	}
 	cliVersionMutex.RUnlock()
+
+	// Clean up old _MEI folders before running the command
+	cleanOldMEIFolders()
 
 	cmd := exec.Command(binaryName, "--version")
 	output, err := cmd.CombinedOutput()
@@ -117,16 +163,23 @@ func processArgsToTempFiles(args []string) ([]string, []string, error) {
 // @Title RunCasbinCommand
 // @Tag Enforcer API
 // @Description Call Casbin CLI commands
+// @Param   language query string false "The CLI language (default: go)"
+// @Param   args     query string true  "The CLI command arguments"
 // @Success 200 {object} controllers.Response The Response object
 // @router /run-casbin-command [get]
 func (c *ApiController) RunCasbinCommand() {
+	if !conf.IsDemoMode() && !c.IsAdmin() {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
 	if err := validateIdentifier(c); err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
 
-	language := c.Input().Get("language")
-	argString := c.Input().Get("args")
+	language := c.Ctx.Input.Query("language")
+	argString := c.Ctx.Input.Query("args")
 
 	if language == "" {
 		language = "go"
@@ -152,6 +205,19 @@ func (c *ApiController) RunCasbinCommand() {
 		return
 	}
 
+	// Generate cache key for this command
+	cacheKey, err := generateCacheKey(language, args)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	// Check if result is cached
+	if cachedOutput, found := getCachedCommandResult(cacheKey); found {
+		c.ResponseOk(cachedOutput)
+		return
+	}
+
 	if len(args) > 0 && args[0] == "--version" {
 		version, err := getCLIVersion(language)
 		if err != nil {
@@ -173,6 +239,10 @@ func (c *ApiController) RunCasbinCommand() {
 		return
 	}
 
+	// Clean up old _MEI folders before running the command
+	// This is especially important for Python CLI which creates these folders
+	cleanOldMEIFolders()
+
 	command := exec.Command(binaryName, processedArgs...)
 	outputBytes, err := command.CombinedOutput()
 	if err != nil {
@@ -188,6 +258,10 @@ func (c *ApiController) RunCasbinCommand() {
 
 	output := string(outputBytes)
 	output = strings.TrimSuffix(output, "\n")
+
+	// Store result in cache
+	setCachedCommandResult(cacheKey, output)
+
 	c.ResponseOk(output)
 }
 
@@ -197,10 +271,10 @@ func (c *ApiController) RunCasbinCommand() {
 // @Param hash string The SHA-256 hash string
 // @Return error Returns error if validation fails, nil if successful
 func validateIdentifier(c *ApiController) error {
-	language := c.Input().Get("language")
-	args := c.Input().Get("args")
-	hash := c.Input().Get("m")
-	timestamp := c.Input().Get("t")
+	language := c.Ctx.Input.Query("language")
+	args := c.Ctx.Input.Query("args")
+	hash := c.Ctx.Input.Query("m")
+	timestamp := c.Ctx.Input.Query("t")
 
 	if hash == "" || timestamp == "" || language == "" || args == "" {
 		return fmt.Errorf("invalid identifier")

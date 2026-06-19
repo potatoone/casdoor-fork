@@ -13,11 +13,13 @@
 // limitations under the License.
 
 import React from "react";
+import Loading from "./common/Loading";
 import {Button, Card, Col, Input, Row, Select, Switch} from "antd";
 import * as GroupBackend from "./backend/GroupBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as Setting from "./Setting";
 import i18next from "i18next";
+import PropertyTable from "./table/propertyTable";
 
 class GroupEditPage extends React.Component {
   constructor(props) {
@@ -197,6 +199,17 @@ class GroupEditPage extends React.Component {
             }} />
           </Col>
         </Row>
+        <Row style={{marginTop: "20px"}} >
+          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+            {Setting.getLabel(i18next.t("user:Properties"), i18next.t("user:Properties - Tooltip"))} :
+          </Col>
+          <Col span={22} >
+            <PropertyTable
+              properties={this.state.group.properties === null || this.state.group.properties === undefined ? {} : this.state.group.properties}
+              onUpdateTable={(value) => {this.updateGroupField("properties", value);}}
+            />
+          </Col>
+        </Row>
       </Card>
     );
   }
@@ -258,7 +271,7 @@ class GroupEditPage extends React.Component {
     return (
       <div>
         {
-          this.state.group !== null ? this.renderGroup() : null
+          this.state.group !== null ? this.renderGroup() : <Loading type="page" tip={i18next.t("login:Loading")} />
         }
         <div style={{marginTop: "20px", marginLeft: "40px"}}>
           <Button size="large" onClick={() => this.submitGroupEdit(false)}>{i18next.t("general:Save")}</Button>

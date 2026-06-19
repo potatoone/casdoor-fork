@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"strings"
 
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/object"
@@ -149,10 +150,6 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	r := m.GetSearchRequest()
-	if r.FilterString() == "(objectClass=*)" {
-		w.Write(res)
-		return
-	}
 
 	// Handle Stop Signal (server stop / client disconnected / Abandoned request....)
 	select {
@@ -162,6 +159,43 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
+	if strings.EqualFold(r.FilterString(), "(objectClass=*)") && (string(r.BaseObject()) == "" || strings.EqualFold(string(r.BaseObject()), "cn=Subschema")) {
+		handleRootSearch(w, &r, &res, m)
+		return
+	}
+
+	var isGroupSearch bool = false
+	filter := r.Filter()
+	if eq, ok := filter.(message.FilterEqualityMatch); ok && strings.EqualFold(string(eq.AttributeDesc()), "objectClass") && strings.EqualFold(string(eq.AssertionValue()), "posixGroup") {
+		isGroupSearch = true
+	}
+
+	if isGroupSearch {
+		groups, code := GetFilteredGroups(m, string(r.BaseObject()), r.FilterString())
+		if code != ldap.LDAPResultSuccess {
+			res.SetResultCode(code)
+			w.Write(res)
+			return
+		}
+
+		for _, group := range groups {
+			dn := fmt.Sprintf("cn=%s,%s", group.Name, string(r.BaseObject()))
+			e := ldap.NewSearchResultEntry(dn)
+			e.AddAttribute("cn", message.AttributeValue(group.Name))
+			gidNumberStr := fmt.Sprintf("%v", hash(group.Name))
+			e.AddAttribute("gidNumber", message.AttributeValue(gidNumberStr))
+			users := object.GetGroupUsersWithoutError(group.GetId())
+			for _, user := range users {
+				e.AddAttribute("memberUid", message.AttributeValue(user.Name))
+			}
+			e.AddAttribute("objectClass", "posixGroup")
+			w.Write(e)
+		}
+
+		w.Write(res)
+		return
+	}
+
 	users, code := GetFilteredUsers(m)
 	if code != ldap.LDAPResultSuccess {
 		res.SetResultCode(code)
@@ -169,34 +203,140 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	orgCache := make(map[string]*object.Organization)
+
 	for _, user := range users {
-		dn := fmt.Sprintf("uid=%s,cn=%s,%s", user.Id, user.Name, string(r.BaseObject()))
-		e := ldap.NewSearchResultEntry(dn)
-		uidNumberStr := fmt.Sprintf("%v", hash(user.Name))
+		if _, ok := orgCache[user.Owner]; !ok {
+			org, err := object.GetOrganizationByUser(user)
+			if err != nil {
+				log.Printf("handleSearch: failed to get organization for user %s: %v", user.Name, err)
+			}
+			orgCache[user.Owner] = org
+		}
+		org := orgCache[user.Owner]
+
+		e := buildUserSearchEntry(user, string(r.BaseObject()), resolveRequestAttributes(r.Attributes()), org)
+		w.Write(e)
+	}
+	w.Write(res)
+}
+
+// resolveRequestAttributes expands the "*" wildcard to the full list of additional LDAP attributes.
+func resolveRequestAttributes(attrs message.AttributeSelection) []string {
+	result := make([]string, 0, len(attrs))
+	for _, attr := range attrs {
+		if string(attr) == "*" {
+			result = make([]string, 0, len(AdditionalLdapAttributes))
+			for _, a := range AdditionalLdapAttributes {
+				result = append(result, string(a))
+			}
+			return result
+		}
+		result = append(result, string(attr))
+	}
+	return result
+}
+
+// buildUserSearchEntry constructs an LDAP search result entry for the given user,
+// respecting the organization's LdapAttributes filter.
+func buildUserSearchEntry(user *object.User, baseDN string, attrs []string, org *object.Organization) message.SearchResultEntry {
+	dn := fmt.Sprintf("uid=%s,cn=%s,%s", user.Id, user.Name, baseDN)
+	e := ldap.NewSearchResultEntry(dn)
+	uidNumberStr := fmt.Sprintf("%v", hash(user.Name))
+	if IsLdapAttrAllowed(org, "uidNumber") {
 		e.AddAttribute("uidNumber", message.AttributeValue(uidNumberStr))
+	}
+	if IsLdapAttrAllowed(org, "gidNumber") {
 		e.AddAttribute("gidNumber", message.AttributeValue(uidNumberStr))
+	}
+	if IsLdapAttrAllowed(org, "homeDirectory") {
 		e.AddAttribute("homeDirectory", message.AttributeValue("/home/"+user.Name))
+	}
+	if IsLdapAttrAllowed(org, "cn") {
 		e.AddAttribute("cn", message.AttributeValue(user.Name))
+	}
+	if IsLdapAttrAllowed(org, "uid") {
 		e.AddAttribute("uid", message.AttributeValue(user.Id))
+	}
+	if IsLdapAttrAllowed(org, "mail") {
+		e.AddAttribute("mail", message.AttributeValue(user.Email))
+	}
+	if IsLdapAttrAllowed(org, "mobile") {
+		e.AddAttribute("mobile", message.AttributeValue(user.Phone))
+	}
+	if IsLdapAttrAllowed(org, "sn") {
+		e.AddAttribute("sn", message.AttributeValue(user.LastName))
+	}
+	if IsLdapAttrAllowed(org, "givenName") {
+		e.AddAttribute("givenName", message.AttributeValue(user.FirstName))
+	}
+	// Add POSIX attributes for Linux machine login support
+	if IsLdapAttrAllowed(org, "loginShell") {
+		e.AddAttribute("loginShell", getAttribute("loginShell", user))
+	}
+	if IsLdapAttrAllowed(org, "gecos") {
+		e.AddAttribute("gecos", getAttribute("gecos", user))
+	}
+	// Add SSH public key if available
+	if IsLdapAttrAllowed(org, "sshPublicKey") {
+		sshKey := getAttribute("sshPublicKey", user)
+		if sshKey != "" {
+			e.AddAttribute("sshPublicKey", sshKey)
+		}
+	}
+	// Add objectClass for posixAccount
+	e.AddAttribute("objectClass", "posixAccount")
+	if IsLdapAttrAllowed(org, ldapMemberOfAttr) {
 		for _, group := range user.Groups {
 			e.AddAttribute(ldapMemberOfAttr, message.AttributeValue(group))
 		}
-		attrs := r.Attributes()
-		for _, attr := range attrs {
-			if string(attr) == "*" {
-				attrs = AdditionalLdapAttributes
-				break
-			}
+	}
+	for _, attr := range attrs {
+		if !IsLdapAttrAllowed(org, attr) {
+			continue
 		}
-		for _, attr := range attrs {
-			e.AddAttribute(message.AttributeDescription(attr), getAttribute(string(attr), user))
-			if string(attr) == "title" {
-				e.AddAttribute(message.AttributeDescription(attr), getAttribute("title", user))
-			}
-		}
+		e.AddAttribute(message.AttributeDescription(attr), getAttribute(attr, user))
+	}
+	return e
+}
 
+func handleRootSearch(w ldap.ResponseWriter, r *message.SearchRequest, res *message.SearchResultDone, m *ldap.Message) {
+	if len(r.Attributes()) == 0 {
+		w.Write(res)
+		return
+	}
+	firstAttr := string(r.Attributes()[0])
+
+	if string(r.BaseObject()) == "" {
+		// Handle special root DSE requests
+		if strings.EqualFold(firstAttr, "namingContexts") {
+			orgs, code := GetFilteredOrganizations(m)
+			if code != ldap.LDAPResultSuccess {
+				res.SetResultCode(code)
+				w.Write(res)
+				return
+			}
+			e := ldap.NewSearchResultEntry(string(r.BaseObject()))
+			dnlist := make([]message.AttributeValue, len(orgs))
+			for i, org := range orgs {
+				dnlist[i] = message.AttributeValue(fmt.Sprintf("ou=%s", org.Name))
+			}
+			e.AddAttribute("namingContexts", dnlist...)
+			w.Write(e)
+		} else if strings.EqualFold(firstAttr, "subschemaSubentry") {
+			e := ldap.NewSearchResultEntry(string(r.BaseObject()))
+			e.AddAttribute("subschemaSubentry", message.AttributeValue("cn=Subschema"))
+			w.Write(e)
+		}
+	} else if strings.EqualFold(firstAttr, "objectclasses") && strings.EqualFold(string(r.BaseObject()), "cn=Subschema") {
+		e := ldap.NewSearchResultEntry(string(r.BaseObject()))
+		e.AddAttribute("objectClasses", []message.AttributeValue{
+			"( 1.3.6.1.1.1.2.0 NAME 'posixAccount' DESC 'Abstraction of an account with POSIX attributes' SUP top AUXILIARY MUST ( cn $ uid $ uidNumber $ gidNumber $ homeDirectory ) MAY ( userPassword $ loginShell $ gecos $ description ) )",
+			"( 1.3.6.1.1.1.2.2 NAME 'posixGroup' DESC 'Abstraction of a group of accounts' SUP top STRUCTURAL MUST ( cn $ gidNumber ) MAY ( userPassword $ memberUid $ description ) )",
+		}...)
 		w.Write(e)
 	}
+
 	w.Write(res)
 }
 

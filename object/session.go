@@ -15,9 +15,11 @@
 package object
 
 import (
+	"context"
 	"fmt"
+	"slices"
 
-	"github.com/beego/beego"
+	"github.com/beego/beego/v2/server/web"
 	"github.com/casdoor/casdoor/util"
 	"github.com/xorm-io/core"
 )
@@ -34,6 +36,8 @@ type Session struct {
 	CreatedTime string `xorm:"varchar(100)" json:"createdTime"`
 
 	SessionId []string `json:"sessionId"`
+
+	ExclusiveSignin bool `xorm:"-"`
 }
 
 func GetSessions(owner string) ([]*Session, error) {
@@ -44,6 +48,28 @@ func GetSessions(owner string) ([]*Session, error) {
 	} else {
 		err = ormer.Engine.Desc("created_time").Find(&sessions)
 	}
+	if err != nil {
+		return sessions, err
+	}
+
+	return sessions, nil
+}
+
+func GetUserSessions(owner string, name string) ([]*Session, error) {
+	sessions := []*Session{}
+
+	err := ormer.Engine.Desc("created_time").Where("owner = ? and name = ?", owner, name).Find(&sessions)
+	if err != nil {
+		return sessions, err
+	}
+
+	return sessions, nil
+}
+
+func GetUserAppSessions(owner string, name string, application string) ([]*Session, error) {
+	sessions := []*Session{}
+
+	err := ormer.Engine.Desc("created_time").Where("owner = ? and name = ? and application = ?", owner, name, application).Find(&sessions)
 	if err != nil {
 		return sessions, err
 	}
@@ -133,11 +159,15 @@ func AddSession(session *Session) (bool, error) {
 
 		removeExtraSessionIds(dbSession)
 
+		if session.ExclusiveSignin {
+			dbSession.SessionId = []string{session.SessionId[0]}
+		}
+
 		return UpdateSession(dbSession.GetId(), dbSession)
 	}
 }
 
-func DeleteSession(id string) (bool, error) {
+func DeleteSession(id, curSessionId string) (bool, error) {
 	owner, name, application := util.GetOwnerAndNameAndOtherFromId(id)
 	if owner == CasdoorOrganization && application == CasdoorApplication {
 		session, err := GetSingleSession(id)
@@ -145,12 +175,29 @@ func DeleteSession(id string) (bool, error) {
 			return false, err
 		}
 
-		if session != nil {
-			DeleteBeegoSession(session.SessionId)
+		// If session doesn't exist, return success with no rows affected
+		// This is a valid state (e.g., when a user has no active session)
+		if session == nil {
+			return false, nil
 		}
+
+		if slices.Contains(session.SessionId, curSessionId) {
+			return false, fmt.Errorf("session:session id %s is the current session and cannot be deleted", curSessionId)
+		}
+
+		DeleteBeegoSession(session.SessionId)
 	}
 
 	affected, err := ormer.Engine.ID(core.PK{owner, name, application}).Delete(&Session{})
+	if err != nil {
+		return false, err
+	}
+
+	return affected != 0, nil
+}
+
+func DeleteAllUserSessions(owner string, name string) (bool, error) {
+	affected, err := ormer.Engine.Where("owner = ? and name = ?", owner, name).Delete(&Session{})
 	if err != nil {
 		return false, err
 	}
@@ -174,7 +221,7 @@ func DeleteSessionId(id string, sessionId string) (bool, error) {
 
 	session.SessionId = util.DeleteVal(session.SessionId, sessionId)
 	if len(session.SessionId) == 0 {
-		return DeleteSession(id)
+		return DeleteSession(id, "")
 	} else {
 		return UpdateSession(id, session)
 	}
@@ -182,7 +229,7 @@ func DeleteSessionId(id string, sessionId string) (bool, error) {
 
 func DeleteBeegoSession(sessionIds []string) {
 	for _, sessionId := range sessionIds {
-		err := beego.GlobalSessions.GetProvider().SessionDestroy(sessionId)
+		err := web.GlobalSessions.GetProvider().SessionDestroy(context.Background(), sessionId)
 		if err != nil {
 			return
 		}

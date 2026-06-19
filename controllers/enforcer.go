@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/beego/beego/utils/pagination"
+	"github.com/beego/beego/v2/core/utils/pagination"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 	xormadapter "github.com/casdoor/xorm-adapter/v3"
@@ -32,13 +32,13 @@ import (
 // @Success 200 {array} object.Enforcer
 // @router /get-enforcers [get]
 func (c *ApiController) GetEnforcers() {
-	owner := c.Input().Get("owner")
-	limit := c.Input().Get("pageSize")
-	page := c.Input().Get("p")
-	field := c.Input().Get("field")
-	value := c.Input().Get("value")
-	sortField := c.Input().Get("sortField")
-	sortOrder := c.Input().Get("sortOrder")
+	owner := c.Ctx.Input.Query("owner")
+	limit := c.Ctx.Input.Query("pageSize")
+	page := c.Ctx.Input.Query("p")
+	field := c.Ctx.Input.Query("field")
+	value := c.Ctx.Input.Query("value")
+	sortField := c.Ctx.Input.Query("sortField")
+	sortOrder := c.Ctx.Input.Query("sortOrder")
 
 	if limit == "" || page == "" {
 		enforcers, err := object.GetEnforcers(owner)
@@ -56,7 +56,7 @@ func (c *ApiController) GetEnforcers() {
 			return
 		}
 
-		paginator := pagination.SetPaginator(c.Ctx, limit, count)
+		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
 		enforcers, err := object.GetPaginationEnforcers(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
 			c.ResponseError(err.Error())
@@ -75,8 +75,8 @@ func (c *ApiController) GetEnforcers() {
 // @Success 200 {object} object.Enforcer
 // @router /get-enforcer [get]
 func (c *ApiController) GetEnforcer() {
-	id := c.Input().Get("id")
-	loadModelCfg := c.Input().Get("loadModelCfg")
+	id := c.Ctx.Input.Query("id")
+	loadModelCfg := c.Ctx.Input.Query("loadModelCfg")
 
 	enforcer, err := object.GetEnforcer(id)
 	if err != nil {
@@ -84,10 +84,12 @@ func (c *ApiController) GetEnforcer() {
 		return
 	}
 
-	if loadModelCfg == "true" && enforcer.Model != "" {
-		err := enforcer.LoadModelCfg()
-		if err != nil {
-			return
+	if enforcer != nil {
+		if loadModelCfg == "true" && enforcer.Model != "" {
+			err = enforcer.LoadModelCfg()
+			if err != nil {
+				return
+			}
 		}
 	}
 
@@ -103,7 +105,7 @@ func (c *ApiController) GetEnforcer() {
 // @Success 200 {object} object.Enforcer
 // @router /update-enforcer [post]
 func (c *ApiController) UpdateEnforcer() {
-	id := c.Input().Get("id")
+	id := c.Ctx.Input.Query("id")
 
 	enforcer := object.Enforcer{}
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &enforcer)
@@ -154,9 +156,17 @@ func (c *ApiController) DeleteEnforcer() {
 	c.ServeJSON()
 }
 
+// GetPolicies
+// @Title GetPolicies
+// @Tag Enforcer API
+// @Description get policies
+// @Param   id     query    string  true        "The id ( owner/name )  of enforcer"
+// @Param   adapterId     query    string  false        "The adapter id"
+// @Success 200 {array} xormadapter.CasbinRule
+// @router /get-policies [get]
 func (c *ApiController) GetPolicies() {
-	id := c.Input().Get("id")
-	adapterId := c.Input().Get("adapterId")
+	id := c.Ctx.Input.Query("id")
+	adapterId := c.Ctx.Input.Query("adapterId")
 
 	if adapterId != "" {
 		adapter, err := object.GetAdapter(adapterId)
@@ -188,8 +198,43 @@ func (c *ApiController) GetPolicies() {
 	c.ResponseOk(policies)
 }
 
+// GetFilteredPolicies
+// @Title GetFilteredPolicies
+// @Tag Enforcer API
+// @Description get filtered policies with support for multiple filters via POST body
+// @Param   id     query    string  true        "The id ( owner/name )  of enforcer"
+// @Param   body   body    []object.Filter  true        "Array of filter objects for multiple filters"
+// @Success 200 {array} xormadapter.CasbinRule
+// @router /get-filtered-policies [post]
+func (c *ApiController) GetFilteredPolicies() {
+	id := c.Ctx.Input.Query("id")
+
+	var filters []object.Filter
+	err := json.Unmarshal(c.Ctx.Input.RequestBody, &filters)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	filteredPolicies, err := object.GetFilteredPoliciesMulti(id, filters)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.ResponseOk(filteredPolicies)
+}
+
+// UpdatePolicy
+// @Title UpdatePolicy
+// @Tag Enforcer API
+// @Description update policy
+// @Param   id     query    string  true        "The id ( owner/name )  of enforcer"
+// @Param   body     body    []xormadapter.CasbinRule  true        "Array containing old and new policy"
+// @Success 200 {object} Response
+// @router /update-policy [post]
 func (c *ApiController) UpdatePolicy() {
-	id := c.Input().Get("id")
+	id := c.Ctx.Input.Query("id")
 
 	var policies []xormadapter.CasbinRule
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &policies)
@@ -207,8 +252,16 @@ func (c *ApiController) UpdatePolicy() {
 	c.ServeJSON()
 }
 
+// AddPolicy
+// @Title AddPolicy
+// @Tag Enforcer API
+// @Description add policy
+// @Param   id     query    string  true        "The id ( owner/name )  of enforcer"
+// @Param   body     body    xormadapter.CasbinRule  true        "The policy to add"
+// @Success 200 {object} Response
+// @router /add-policy [post]
 func (c *ApiController) AddPolicy() {
-	id := c.Input().Get("id")
+	id := c.Ctx.Input.Query("id")
 
 	var policy xormadapter.CasbinRule
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &policy)
@@ -226,8 +279,16 @@ func (c *ApiController) AddPolicy() {
 	c.ServeJSON()
 }
 
+// RemovePolicy
+// @Title RemovePolicy
+// @Tag Enforcer API
+// @Description remove policy
+// @Param   id     query    string  true        "The id ( owner/name )  of enforcer"
+// @Param   body     body    xormadapter.CasbinRule  true        "The policy to remove"
+// @Success 200 {object} Response
+// @router /remove-policy [post]
 func (c *ApiController) RemovePolicy() {
-	id := c.Input().Get("id")
+	id := c.Ctx.Input.Query("id")
 
 	var policy xormadapter.CasbinRule
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &policy)

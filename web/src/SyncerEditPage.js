@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import React from "react";
+import Loading from "./common/Loading";
 import {Button, Card, Col, Input, InputNumber, Radio, Row, Select, Switch} from "antd";
 import {LinkOutlined} from "@ant-design/icons";
 import * as SyncerBackend from "./backend/SyncerBackend";
@@ -33,6 +34,7 @@ class SyncerEditPage extends React.Component {
       certs: [],
       classes: props,
       syncerName: props.match.params.syncerName,
+      organizationName: props.match.params.organizationName,
       syncer: null,
       organizations: [],
       mode: props.location.mode !== undefined ? props.location.mode : "edit",
@@ -46,7 +48,7 @@ class SyncerEditPage extends React.Component {
   }
 
   getSyncer() {
-    SyncerBackend.getSyncer("admin", this.state.syncerName)
+    SyncerBackend.getSyncer("admin", this.state.syncerName, this.state.organizationName)
       .then((res) => {
         if (res.data === null) {
           this.props.history.push("/404");
@@ -61,10 +63,15 @@ class SyncerEditPage extends React.Component {
         this.setState({
           syncer: res.data,
         });
+
+        if (res.data && res.data.organization) {
+          this.getCerts(res.data.organization);
+        }
       });
   }
 
   getCerts(owner) {
+    // Load certificates for the given organization
     CertBackend.getCerts(owner)
       .then((res) => {
         this.setState({
@@ -79,9 +86,6 @@ class SyncerEditPage extends React.Component {
         this.setState({
           organizations: res.data || [],
         });
-        if (res.data) {
-          this.getCerts(`${res.data.owner}/${res.data.name}`);
-        }
       });
   }
 
@@ -96,6 +100,12 @@ class SyncerEditPage extends React.Component {
     value = this.parseSyncerField(key, value);
 
     const syncer = this.state.syncer;
+    if (key === "organization" && syncer["organization"] !== value) {
+      // the syncer changed the organization, reset the cert and reload certs
+      syncer["cert"] = "";
+      this.getCerts(value);
+    }
+
     syncer[key] = value;
     this.setState({
       syncer: syncer,
@@ -188,9 +198,600 @@ class SyncerEditPage extends React.Component {
           ],
         },
       ];
+    case "WeCom":
+      return [
+        {
+          "name": "userid",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mobile",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "avatar",
+          "type": "string",
+          "casdoorName": "Avatar",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "position",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "gender",
+          "type": "string",
+          "casdoorName": "Gender",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "Azure AD":
+      return [
+        {
+          "name": "id",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "userPrincipalName",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "displayName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "givenName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "surname",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mail",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mobilePhone",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "jobTitle",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "officeLocation",
+          "type": "string",
+          "casdoorName": "Location",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "preferredLanguage",
+          "type": "string",
+          "casdoorName": "Language",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "accountEnabled",
+          "type": "boolean",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "Google Workspace":
+      return [
+        {
+          "name": "id",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "primaryEmail",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name.fullName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name.givenName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name.familyName",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "suspended",
+          "type": "boolean",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "isAdmin",
+          "type": "boolean",
+          "casdoorName": "IsAdmin",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "DingTalk":
+      return [
+        {
+          "name": "userid",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "unionid",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mobile",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "avatar",
+          "type": "string",
+          "casdoorName": "Avatar",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "active",
+          "type": "boolean",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "Active Directory":
+      return [
+        {
+          "name": "objectGUID",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "sAMAccountName",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "displayName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "givenName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "sn",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mail",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mobile",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "department",
+          "type": "string",
+          "casdoorName": "Affiliation",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "userAccountControl",
+          "type": "string",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "Lark":
+      return [
+        {
+          "name": "user_id",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "mobile",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "avatar",
+          "type": "string",
+          "casdoorName": "Avatar",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "job_title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "gender",
+          "type": "number",
+          "casdoorName": "Gender",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "Okta":
+      return [
+        {
+          "name": "id",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.login",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.displayName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.firstName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.lastName",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.email",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.mobilePhone",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "profile.preferredLanguage",
+          "type": "string",
+          "casdoorName": "Language",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "SCIM":
+      return [
+        {
+          "name": "id",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "userName",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "displayName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name.givenName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "name.familyName",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "emails",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "phoneNumbers",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "preferredLanguage",
+          "type": "string",
+          "casdoorName": "Language",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "active",
+          "type": "boolean",
+          "casdoorName": "IsForbidden",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
+    case "AWS IAM":
+      return [
+        {
+          "name": "UserId",
+          "type": "string",
+          "casdoorName": "Id",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "UserName",
+          "type": "string",
+          "casdoorName": "Name",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "UserName",
+          "type": "string",
+          "casdoorName": "DisplayName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.Email",
+          "type": "string",
+          "casdoorName": "Email",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.Phone",
+          "type": "string",
+          "casdoorName": "Phone",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.FirstName",
+          "type": "string",
+          "casdoorName": "FirstName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.LastName",
+          "type": "string",
+          "casdoorName": "LastName",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.Title",
+          "type": "string",
+          "casdoorName": "Title",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "Tags.Department",
+          "type": "string",
+          "casdoorName": "Affiliation",
+          "isHashed": true,
+          "values": [],
+        },
+        {
+          "name": "CreateDate",
+          "type": "string",
+          "casdoorName": "CreatedTime",
+          "isHashed": true,
+          "values": [],
+        },
+      ];
     default:
       return [];
     }
+  }
+
+  needSshfields() {
+    return this.state.syncer.type === "Database" && (this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres");
   }
 
   renderSyncer() {
@@ -227,7 +828,7 @@ class SyncerEditPage extends React.Component {
         </Row>
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:Type"), i18next.t("provider:Type - Tooltip"))} :
+            {Setting.getLabel(i18next.t("general:Type"), i18next.t("general:Type - Tooltip"))} :
           </Col>
           <Col span={22} >
             <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.type} onChange={(value => {
@@ -235,47 +836,54 @@ class SyncerEditPage extends React.Component {
               const syncer = this.state.syncer;
               syncer["tableColumns"] = this.getSyncerTableColumns(this.state.syncer);
               syncer.table = (value === "Keycloak") ? "user_entity" : this.state.syncer.table;
+              if (["WeCom", "DingTalk", "Lark", "Azure AD", "Google Workspace", "Okta", "SCIM", "AWS IAM"].includes(value)) {
+                syncer.host = "";
+              }
               this.setState({
                 syncer: syncer,
               });
             })}>
               {
-                ["Database", "Keycloak"]
+                ["Database", "Keycloak", "WeCom", "Azure AD", "Active Directory", "Google Workspace", "DingTalk", "Lark", "Okta", "SCIM", "AWS IAM"]
                   .map((item, index) => <Option key={index} value={item}>{item}</Option>)
               }
             </Select>
           </Col>
         </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("syncer:Database type"), i18next.t("syncer:Database type - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.databaseType} onChange={(value => {
-              this.updateSyncerField("databaseType", value);
-              if (value === "postgres") {
-                this.updateSyncerField("sslMode", "disable");
-              } else {
-                this.updateSyncerField("sslMode", "");
-              }
-            })}>
-              {
-                [
-                  {id: "mysql", name: "MySQL"},
-                  {id: "postgres", name: "PostgreSQL"},
-                  {id: "mssql", name: "SQL Server"},
-                  {id: "oracle", name: "Oracle"},
-                  {id: "sqlite3", name: "Sqlite 3"},
-                ].map((item, index) => <Option key={index} value={item.id}>{item.name}</Option>)
-              }
-            </Select>
-          </Col>
-        </Row>
+        {
+          this.state.syncer.type === "WeCom" || this.state.syncer.type === "Azure AD" || this.state.syncer.type === "Active Directory" || this.state.syncer.type === "Google Workspace" || this.state.syncer.type === "DingTalk" || this.state.syncer.type === "Lark" || this.state.syncer.type === "Okta" || this.state.syncer.type === "SCIM" || this.state.syncer.type === "AWS IAM" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(i18next.t("syncer:Database type"), i18next.t("syncer:Database type - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.databaseType} onChange={(value => {
+                  this.updateSyncerField("databaseType", value);
+                  if (value === "postgres") {
+                    this.updateSyncerField("sslMode", "disable");
+                  } else {
+                    this.updateSyncerField("sslMode", "");
+                  }
+                })}>
+                  {
+                    [
+                      {id: "mysql", name: "MySQL"},
+                      {id: "postgres", name: "PostgreSQL"},
+                      {id: "mssql", name: "SQL Server"},
+                      {id: "oracle", name: "Oracle"},
+                      {id: "sqlite3", name: "Sqlite 3"},
+                    ].map((item, index) => <Option key={index} value={item.id}>{item.name}</Option>)
+                  }
+                </Select>
+              </Col>
+            </Row>
+          )
+        }
         {
           this.state.syncer.databaseType !== "postgres" ? null : (
             <Row style={{marginTop: "20px"}} >
               <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-                {Setting.getLabel(i18next.t("syncer:SSL mode"), i18next.t("syncer:SSL mode - Tooltip"))} :
+                {Setting.getLabel(i18next.t("provider:SSL mode"), i18next.t("provider:SSL mode - Tooltip"))} :
               </Col>
               <Col span={22} >
                 <Select virtual={false} style={{width: "100%"}} value={this.state.syncer.sslMode} onChange={(value => {this.updateSyncerField("sslMode", value);})}>
@@ -294,58 +902,102 @@ class SyncerEditPage extends React.Component {
             </Row>
           )
         }
+        {
+          this.state.syncer.type === "WeCom" || this.state.syncer.type === "DingTalk" || this.state.syncer.type === "Lark" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(this.state.syncer.type === "Azure AD" ? i18next.t("provider:Tenant ID") : this.state.syncer.type === "Google Workspace" ? i18next.t("syncer:Admin Email") : this.state.syncer.type === "Active Directory" ? i18next.t("ldap:Server") : this.state.syncer.type === "SCIM" ? i18next.t("syncer:SCIM Server URL") : this.state.syncer.type === "AWS IAM" ? i18next.t("syncer:AWS Region") : i18next.t("general:Host"), i18next.t("provider:Host - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Input prefix={<LinkOutlined />} value={this.state.syncer.host} onChange={e => {
+                  this.updateSyncerField("host", e.target.value);
+                }} />
+              </Col>
+            </Row>
+          )
+        }
+        {
+          this.state.syncer.type === "WeCom" || this.state.syncer.type === "Azure AD" || this.state.syncer.type === "Google Workspace" || this.state.syncer.type === "DingTalk" || this.state.syncer.type === "Lark" || this.state.syncer.type === "Okta" || this.state.syncer.type === "SCIM" || this.state.syncer.type === "AWS IAM" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(this.state.syncer.type === "Active Directory" ? i18next.t("provider:LDAP port") : i18next.t("general:Port"), i18next.t("provider:Port - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <InputNumber value={this.state.syncer.port} onChange={value => {
+                  this.updateSyncerField("port", value);
+                }} />
+              </Col>
+            </Row>
+          )
+        }
+        {
+          this.state.syncer.type === "Google Workspace" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(
+                  this.state.syncer.type === "WeCom" ? i18next.t("syncer:Corp ID") :
+                    this.state.syncer.type === "DingTalk" ? i18next.t("provider:App Key") :
+                      this.state.syncer.type === "Lark" ? i18next.t("provider:App ID") :
+                        this.state.syncer.type === "Azure AD" ? i18next.t("provider:Client ID") :
+                          this.state.syncer.type === "Active Directory" ? i18next.t("syncer:Bind DN") :
+                            this.state.syncer.type === "SCIM" ? i18next.t("syncer:Username (optional)") :
+                              this.state.syncer.type === "AWS IAM" ? i18next.t("syncer:AWS Access Key ID") :
+                                i18next.t("general:User"),
+                  i18next.t("general:User - Tooltip")
+                )} :
+              </Col>
+              <Col span={22} >
+                <Input value={this.state.syncer.user} onChange={e => {
+                  this.updateSyncerField("user", e.target.value);
+                }} />
+              </Col>
+            </Row>
+          )
+        }
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:Host"), i18next.t("provider:Host - Tooltip"))} :
+            {Setting.getLabel(
+              this.state.syncer.type === "WeCom" ? i18next.t("syncer:Corp secret") :
+                this.state.syncer.type === "DingTalk" ? i18next.t("provider:App secret") :
+                  this.state.syncer.type === "Lark" ? i18next.t("provider:App secret") :
+                    this.state.syncer.type === "Azure AD" ? i18next.t("provider:Client secret") :
+                      this.state.syncer.type === "Google Workspace" ? i18next.t("syncer:Service account key") :
+                        this.state.syncer.type === "SCIM" ? i18next.t("syncer:API Token / Password") :
+                          this.state.syncer.type === "AWS IAM" ? i18next.t("syncer:AWS Secret Access Key") :
+                            i18next.t("general:Password"),
+              i18next.t("general:Password - Tooltip")
+            )} :
           </Col>
           <Col span={22} >
-            <Input prefix={<LinkOutlined />} value={this.state.syncer.host} onChange={e => {
-              this.updateSyncerField("host", e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:Port"), i18next.t("provider:Port - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <InputNumber value={this.state.syncer.port} onChange={value => {
-              this.updateSyncerField("port", value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("general:User"), i18next.t("general:User - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.user} onChange={e => {
-              this.updateSyncerField("user", e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("general:Password"), i18next.t("general:Password - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input.Password value={this.state.syncer.password} onChange={e => {
-              this.updateSyncerField("password", e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("syncer:Database"), i18next.t("syncer:Database - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.database} onChange={e => {
-              this.updateSyncerField("database", e.target.value);
-            }} />
+            {
+              this.state.syncer.type === "Google Workspace" ? (
+                <Input.TextArea rows={4} value={this.state.syncer.password} onChange={e => {
+                  this.updateSyncerField("password", e.target.value);
+                }} placeholder={i18next.t("syncer:Paste your Google Workspace service account JSON key here")} />
+              ) : (
+                <Input.Password value={this.state.syncer.password} onChange={e => {
+                  this.updateSyncerField("password", e.target.value);
+                }} />
+              )
+            }
           </Col>
         </Row>
         {
-          this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres" ? (
+          this.state.syncer.type === "WeCom" || this.state.syncer.type === "Azure AD" || this.state.syncer.type === "Google Workspace" || this.state.syncer.type === "DingTalk" || this.state.syncer.type === "Lark" || this.state.syncer.type === "Okta" || this.state.syncer.type === "SCIM" || this.state.syncer.type === "AWS IAM" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(this.state.syncer.type === "Active Directory" ? i18next.t("ldap:Base DN") : i18next.t("syncer:Database"), i18next.t("syncer:Database - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Input value={this.state.syncer.database} onChange={e => {
+                  this.updateSyncerField("database", e.target.value);
+                }} />
+              </Col>
+            </Row>
+          )
+        }
+        {
+          this.needSshfields() ? (
             <Row style={{marginTop: "20px"}} >
               <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
                 {Setting.getLabel(i18next.t("general:SSH type"), i18next.t("general:SSH type - Tooltip"))} :
@@ -363,7 +1015,7 @@ class SyncerEditPage extends React.Component {
           ) : null
         }
         {
-          this.state.syncer.sshType && this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres" ? (
+          this.state.syncer.sshType && this.needSshfields() ? (
             <React.Fragment>
               <Row style={{marginTop: "20px"}} >
                 <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
@@ -396,7 +1048,7 @@ class SyncerEditPage extends React.Component {
                 </Col>
               </Row>
               {
-                this.state.syncer.sshType === "password" && (this.state.syncer.databaseType === "mysql" || this.state.syncer.databaseType === "mssql" || this.state.syncer.databaseType === "postgres") ?
+                this.state.syncer.sshType === "password" && this.needSshfields() ?
                   (
                     <Row style={{marginTop: "20px"}} >
                       <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
@@ -426,19 +1078,23 @@ class SyncerEditPage extends React.Component {
             </React.Fragment>
           ) : null
         }
+        {
+          this.state.syncer.type === "WeCom" || this.state.syncer.type === "Azure AD" || this.state.syncer.type === "Google Workspace" || this.state.syncer.type === "DingTalk" || this.state.syncer.type === "Lark" || this.state.syncer.type === "Okta" || this.state.syncer.type === "SCIM" || this.state.syncer.type === "AWS IAM" ? null : (
+            <Row style={{marginTop: "20px"}} >
+              <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                {Setting.getLabel(i18next.t("syncer:Table"), i18next.t("syncer:Table - Tooltip"))} :
+              </Col>
+              <Col span={22} >
+                <Input value={this.state.syncer.table} onChange={e => {
+                  this.updateSyncerField("table", e.target.value);
+                }} />
+              </Col>
+            </Row>
+          )
+        }
         <Row style={{marginTop: "20px"}} >
           <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("syncer:Table"), i18next.t("syncer:Table - Tooltip"))} :
-          </Col>
-          <Col span={22} >
-            <Input value={this.state.syncer.table} onChange={e => {
-              this.updateSyncerField("table", e.target.value);
-            }} />
-          </Col>
-        </Row>
-        <Row style={{marginTop: "20px"}} >
-          <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
-            {Setting.getLabel(i18next.t("provider:DB test"), i18next.t("provider:DB test - Tooltip"))} :
+            {Setting.getLabel(i18next.t("provider:Syncer test"), i18next.t("provider:Syncer test - Tooltip"))} :
           </Col>
           <Col span={2} >
             <Button type={"primary"} loading={this.state.testDbLoading} onClick={() => {
@@ -458,7 +1114,7 @@ class SyncerEditPage extends React.Component {
                   Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
                 });
             }
-            }>{i18next.t("syncer:Test DB Connection")}</Button>
+            }>{i18next.t("syncer:Test Connection")}</Button>
           </Col>
         </Row>
         <Row style={{marginTop: "20px"}} >
@@ -559,7 +1215,7 @@ class SyncerEditPage extends React.Component {
           if (exitAfterSave) {
             this.props.history.push("/syncers");
           } else {
-            this.props.history.push(`/syncers/${this.state.syncer.name}`);
+            this.props.history.push(`/syncers/${this.state.syncer.organization}/${this.state.syncer.name}`);
           }
         } else {
           Setting.showMessage("error", `${i18next.t("general:Failed to save")}: ${res.msg}`);
@@ -589,7 +1245,7 @@ class SyncerEditPage extends React.Component {
     return (
       <div>
         {
-          this.state.syncer !== null ? this.renderSyncer() : null
+          this.state.syncer !== null ? this.renderSyncer() : <Loading type="page" tip={i18next.t("login:Loading")} />
         }
         <div style={{marginTop: "20px", marginLeft: "40px"}}>
           <Button size="large" onClick={() => this.submitSyncerEdit(false)}>{i18next.t("general:Save")}</Button>

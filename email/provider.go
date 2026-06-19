@@ -15,17 +15,20 @@
 package email
 
 type EmailProvider interface {
-	Send(fromAddress string, fromName, toAddress string, subject string, content string) error
+	Send(fromAddress string, fromName string, toAddress []string, subject string, content string) error
 }
 
-func GetEmailProvider(typ string, clientId string, clientSecret string, host string, port int, disableSsl bool, endpoint string, method string, httpHeaders map[string]string, bodyMapping map[string]string, contentType string) EmailProvider {
-	if typ == "Azure ACS" {
+func GetEmailProvider(typ string, clientId string, clientSecret string, host string, port int, sslMode string, endpoint string, method string, httpHeaders map[string]string, bodyMapping map[string]string, contentType string, enableProxy bool) EmailProvider {
+	switch typ {
+	case "Azure ACS":
 		return NewAzureACSEmailProvider(clientSecret, host)
-	} else if typ == "Custom HTTP Email" {
+	case "Custom HTTP Email":
 		return NewHttpEmailProvider(endpoint, method, httpHeaders, bodyMapping, contentType)
-	} else if typ == "SendGrid" {
+	case "SendGrid":
 		return NewSendgridEmailProvider(clientSecret, host, endpoint)
-	} else {
-		return NewSmtpEmailProvider(clientId, clientSecret, host, port, typ, disableSsl)
+	case "Resend":
+		return NewResendEmailProvider(clientSecret)
+	default:
+		return NewSmtpEmailProvider(clientId, clientSecret, host, port, typ, sslMode, enableProxy)
 	}
 }

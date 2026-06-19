@@ -33,7 +33,7 @@ class OrganizationListPage extends BaseListPage {
       displayName: `New Organization - ${randomName}`,
       websiteUrl: "https://door.casdoor.com",
       favicon: `${Setting.StaticBaseUrl}/img/favicon.png`,
-      passwordType: "plain",
+      passwordType: "bcrypt",
       PasswordSalt: "",
       passwordOptions: ["AtLeast6"],
       passwordObfuscatorType: "Plain",
@@ -49,12 +49,16 @@ class OrganizationListPage extends BaseListPage {
       enableSoftDeletion: false,
       isProfilePublic: true,
       enableTour: true,
+      disableSignin: false,
       mfaRememberInHours: DefaultMfaRememberInHours,
+      balanceCurrency: "USD",
       accountItems: [
         {name: "Organization", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "ID", visible: true, viewRule: "Public", modifyRule: "Immutable"},
         {name: "Name", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Display name", visible: true, viewRule: "Public", modifyRule: "Self"},
+        {name: "First name", visible: true, viewRule: "Public", modifyRule: "Self"},
+        {name: "Last name", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Avatar", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "User type", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Password", visible: true, viewRule: "Self", modifyRule: "Self"},
@@ -64,11 +68,14 @@ class OrganizationListPage extends BaseListPage {
         {name: "Country/Region", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Location", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Address", visible: true, viewRule: "Public", modifyRule: "Self"},
+        {name: "Addresses", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Affiliation", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Title", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "ID card type", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "ID card", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "ID card info", visible: true, viewRule: "Public", modifyRule: "Self"},
+        {name: "Real name", visible: true, viewRule: "Public", modifyRule: "Self"},
+        {name: "ID verification", visible: true, viewRule: "Self", modifyRule: "Self"},
         {name: "Homepage", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Bio", visible: true, viewRule: "Public", modifyRule: "Self"},
         {name: "Tag", visible: true, viewRule: "Public", modifyRule: "Admin"},
@@ -79,21 +86,33 @@ class OrganizationListPage extends BaseListPage {
         {name: "Score", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Karma", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Ranking", visible: true, viewRule: "Public", modifyRule: "Admin"},
+        {name: "Balance", visible: true, viewRule: "Public", modifyRule: "Admin"},
+        {name: "Balance credit", visible: true, viewRule: "Public", modifyRule: "Admin"},
+        {name: "Balance currency", visible: true, viewRule: "Public", modifyRule: "Admin"},
+        {name: "Cart", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "Transactions", visible: true, viewRule: "Self", modifyRule: "Self"},
         {name: "Signup application", visible: true, viewRule: "Public", modifyRule: "Admin"},
-        {name: "API key", label: i18next.t("general:API key"), modifyRule: "Self"},
+        {name: "Register type", visible: true, viewRule: "Public", modifyRule: "Admin"},
+        {name: "Register source", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Groups", visible: true, viewRule: "Public", modifyRule: "Admin"},
         {name: "Roles", visible: true, viewRule: "Public", modifyRule: "Immutable"},
         {name: "Permissions", visible: true, viewRule: "Public", modifyRule: "Immutable"},
+        {name: "Consents", visible: true, viewRule: "Self", modifyRule: "Self"},
         {name: "3rd-party logins", visible: true, viewRule: "Self", modifyRule: "Self"},
         {name: "Properties", visible: false, viewRule: "Admin", modifyRule: "Admin"},
         {name: "Is online", visible: true, viewRule: "Admin", modifyRule: "Admin"},
         {name: "Is admin", visible: true, viewRule: "Admin", modifyRule: "Admin"},
         {name: "Is forbidden", visible: true, viewRule: "Admin", modifyRule: "Admin"},
         {name: "Is deleted", visible: true, viewRule: "Admin", modifyRule: "Admin"},
-        {Name: "Multi-factor authentication", Visible: true, ViewRule: "Self", ModifyRule: "Self"},
-        {Name: "WebAuthn credentials", Visible: true, ViewRule: "Self", ModifyRule: "Self"},
-        {Name: "Managed accounts", Visible: true, ViewRule: "Self", ModifyRule: "Self"},
-        {Name: "MFA accounts", Visible: true, ViewRule: "Self", ModifyRule: "Self"},
+        {name: "Multi-factor authentication", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "MFA items", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "WebAuthn credentials", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "Last change password time", visible: true, viewRule: "Admin", modifyRule: "Admin"},
+        {name: "Managed accounts", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "Face ID", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "MFA accounts", visible: true, viewRule: "Self", modifyRule: "Self"},
+        {name: "Need update password", visible: true, viewRule: "Admin", modifyRule: "Admin"},
+        {name: "IP whitelist", visible: true, viewRule: "Admin", modifyRule: "Admin"},
       ],
     };
   }
@@ -204,7 +223,7 @@ class OrganizationListPage extends BaseListPage {
         title: i18next.t("general:Password type"),
         dataIndex: "passwordType",
         key: "passwordType",
-        width: "150px",
+        width: "160px",
         sorter: true,
         filterMultiple: false,
         filters: [
@@ -235,6 +254,46 @@ class OrganizationListPage extends BaseListPage {
         },
       },
       {
+        title: i18next.t("organization:Org balance"),
+        dataIndex: "orgBalance",
+        key: "orgBalance",
+        width: "120px",
+        sorter: true,
+        render: (text, record, index) => {
+          return text ?? 0;
+        },
+      },
+      {
+        title: i18next.t("organization:User balance"),
+        dataIndex: "userBalance",
+        key: "userBalance",
+        width: "130px",
+        sorter: true,
+        render: (text, record, index) => {
+          return text ?? 0;
+        },
+      },
+      {
+        title: i18next.t("organization:Balance credit"),
+        dataIndex: "balanceCredit",
+        key: "balanceCredit",
+        width: "130px",
+        sorter: true,
+        render: (text, record, index) => {
+          return text ?? 0;
+        },
+      },
+      {
+        title: i18next.t("organization:Balance currency"),
+        dataIndex: "balanceCurrency",
+        key: "balanceCurrency",
+        width: "160px",
+        sorter: true,
+        render: (text, record, index) => {
+          return text || "USD";
+        },
+      },
+      {
         title: i18next.t("organization:Soft deletion"),
         dataIndex: "enableSoftDeletion",
         key: "enableSoftDeletion",
@@ -242,7 +301,7 @@ class OrganizationListPage extends BaseListPage {
         sorter: true,
         render: (text, record, index) => {
           return (
-            <Switch disabled checkedChildren="ON" unCheckedChildren="OFF" checked={text} />
+            <Switch disabled checkedChildren={i18next.t("general:ON")} unCheckedChildren={i18next.t("general:OFF")} checked={text} />
           );
         },
       },
@@ -270,6 +329,7 @@ class OrganizationListPage extends BaseListPage {
       },
     ];
 
+    const filteredColumns = Setting.filterTableColumns(columns, this.props.formItems ?? this.state.formItems);
     const paginationProps = {
       total: this.state.pagination.total,
       showQuickJumper: true,
@@ -279,14 +339,14 @@ class OrganizationListPage extends BaseListPage {
 
     return (
       <div>
-        <Table scroll={{x: "max-content"}} columns={columns} dataSource={organizations} rowKey="name" size="middle" bordered pagination={paginationProps}
+        <Table scroll={{x: "max-content"}} columns={filteredColumns} dataSource={organizations} rowKey="name" size="middle" bordered pagination={paginationProps}
           title={() => (
             <div>
               {i18next.t("general:Organizations")}&nbsp;&nbsp;&nbsp;&nbsp;
               <Button type="primary" size="small" disabled={!Setting.isAdminUser(this.props.account)} onClick={this.addOrganization.bind(this)}>{i18next.t("general:Add")}</Button>
             </div>
           )}
-          loading={this.state.loading}
+          loading={this.getTableLoading()}
           onChange={this.handleTableChange}
         />
       </div>

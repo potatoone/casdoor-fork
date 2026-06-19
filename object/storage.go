@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -35,6 +36,7 @@ const (
 	ProviderTypeTencentCloudCOS    = "Tencent Cloud COS"
 	ProviderTypeAzureBlob          = "Azure Blob"
 	ProviderTypeLocalFileSystem    = "Local File System"
+	ProviderTypeMinIO              = "MinIO"
 )
 
 func init() {
@@ -53,6 +55,16 @@ func escapePath(path string) string {
 	tokens := strings.Split(path, "/")
 	if len(tokens) > 0 {
 		tokens[len(tokens)-1] = url.QueryEscape(tokens[len(tokens)-1])
+	}
+
+	res := strings.Join(tokens, "/")
+	return res
+}
+
+func escapePathForCOS(path string) string {
+	tokens := strings.Split(path, "/")
+	if len(tokens) > 0 {
+		tokens[len(tokens)-1] = strings.ReplaceAll(url.QueryEscape(tokens[len(tokens)-1]), "+", "%20")
 	}
 
 	res := strings.Join(tokens, "/")
@@ -109,7 +121,7 @@ func GetUploadFileUrl(provider *Provider, fullFilePath string, hasTimestamp bool
 	// }
 
 	if provider.Type == ProviderTypeTencentCloudCOS {
-		objectKey = escapePath(objectKey)
+		objectKey = escapePathForCOS(objectKey)
 	}
 
 	return fileUrl, objectKey
@@ -211,5 +223,13 @@ func refineObjectKey(provider *Provider, objectKey string) string {
 	if provider.Type == ProviderTypeGoogleCloudStorage {
 		return strings.TrimPrefix(objectKey, "/")
 	}
+
+	if provider.Type == ProviderTypeMinIO && provider.PathPrefix != "" {
+		p := path.Join("/", strings.Trim(provider.PathPrefix, "/"))
+		if strings.HasPrefix(objectKey, p+"/") {
+			return strings.TrimPrefix(objectKey, p+"/")
+		}
+	}
+
 	return objectKey
 }

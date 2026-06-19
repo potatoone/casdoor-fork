@@ -17,9 +17,11 @@ import i18next from "i18next";
 import * as MfaBackend from "../../backend/MfaBackend";
 import * as Setting from "../../Setting";
 import React from "react";
-import {EmailMfaType, SmsMfaType, TotpMfaType} from "../MfaSetupPage";
+import {EmailMfaType, PushMfaType, RadiusMfaType, SmsMfaType, TotpMfaType} from "../MfaSetupPage";
 import MfaVerifySmsForm from "./MfaVerifySmsForm";
 import MfaVerifyTotpForm from "./MfaVerifyTotpForm";
+import MfaVerifyRadiusForm from "./MfaVerifyRadiusForm";
+import MfaVerifyPushForm from "./MfaVerifyPushForm";
 
 export const mfaAuth = "mfaAuth";
 export const mfaSetup = "mfaSetup";
@@ -27,6 +29,16 @@ export const mfaSetup = "mfaSetup";
 export function MfaVerifyForm({mfaProps, application, user, onSuccess, onFail}) {
   const [form] = Form.useForm();
   const onFinish = ({passcode, countryCode, dest}) => {
+    if (mfaProps.mfaType === "radius") {
+      const radiusProvider = application.providers.find(el => el.provider.type === "RADIUS")?.provider;
+      mfaProps.secret = `${radiusProvider.owner}/${radiusProvider.name}`;
+    }
+    if (mfaProps.mfaType === "push") {
+      const pushProvider = application.providers.find(el => el.provider.category === "Notification")?.provider;
+      if (pushProvider) {
+        mfaProps.secret = `${pushProvider.owner}/${pushProvider.name}`;
+      }
+    }
     const data = {passcode, mfaType: mfaProps.mfaType, secret: mfaProps.secret, dest: dest, countryCode: countryCode, ...user};
     MfaBackend.MfaSetupVerify(data)
       .then((res) => {
@@ -54,6 +66,10 @@ export function MfaVerifyForm({mfaProps, application, user, onSuccess, onFail}) 
     return <MfaVerifySmsForm mfaProps={mfaProps} onFinish={onFinish} application={application} method={mfaSetup} user={user} />;
   } else if (mfaProps.mfaType === TotpMfaType) {
     return <MfaVerifyTotpForm mfaProps={mfaProps} onFinish={onFinish} />;
+  } else if (mfaProps.mfaType === RadiusMfaType) {
+    return <MfaVerifyRadiusForm mfaProps={mfaProps} onFinish={onFinish} application={application} method={mfaSetup} user={user} />;
+  } else if (mfaProps.mfaType === PushMfaType) {
+    return <MfaVerifyPushForm mfaProps={mfaProps} onFinish={onFinish} application={application} method={mfaSetup} user={user} />;
   } else {
     return <div></div>;
   }
